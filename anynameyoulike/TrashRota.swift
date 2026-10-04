@@ -3,40 +3,195 @@ import UserNotifications
 
 // MARK: - Model
 
+/// A collection somebody other than the scheduled person actually did.
+///
+/// `dueWas` is frozen when the record is made. Re-phasing the rota afterwards
+/// changes who is due from then on, but it must not rewrite who owed what.
+struct TrashSwap: Codable, Identifiable, Equatable {
+    var id = UUID()
+    var date: Date          // start of the collection day
+    var didIt: String
+    var dueWas: String
+}
+
+/// One Monday or Thursday collection, with who was due and who is on record
+/// as having done it.
+struct TrashCollection: Identifiable {
+    var date: Date
+    var due: String
+    var didIt: String
+
+    var id: Date { date }
+    var isCorrected: Bool { didIt != due }
+}
+
 struct TrashRota: Codable {
     var people: [String] = ["Me"]
     var me: Int = 0
     var anchorMonday: Date = TrashRota.mondayOf(Date())
     var anchorIndex: Int = 0
 
-    static func mondayOf(_ date: Date) -> Date {
+    /// Collections that did not go to plan. The whole ledger is rebuilt from
+    /// these, so correcting one after the fact settles up correctly.
+    var swaps: [TrashSwap] = []
+
+    /// Derived from `swaps`. Written out so the file reads honestly on its
+    /// own, but recomputed on load rather than trusted.
+    var balances: [String: Double] = [:]
+
+    /// A turn is two collections, so half a week is the unit of credit.
+    static let half = 0.5
+    private static let epsilon = 0.0001
+
+    /// How far back a rebuild will walk. Bounds the work when swaps are old.
+    private static let historyCap = 52
+
+    static var gregorian: Calendar {
         var cal = Calendar(identifier: .gregorian)
         cal.firstWeekday = 2
+        return cal
+    }
+
+    static func mondayOf(_ date: Date) -> Date {
+        let cal = gregorian
         let start = cal.dateInterval(of: .weekOfYear, for: date)?.start ?? date
         return cal.startOfDay(for: start)
     }
 
+    // MARK: Persistence
+
     static func load() -> TrashRota {
-        Store.document.trashRota
+        var rota = Store.document.trashRota
+        rota.balances = rota.ledger(covering: 0...0).balances
+        return rota
     }
 
     func save() {
-        Store.mutate { $0.trashRota = self }
+        var copy = self
+        copy.balances = copy.ledger(covering: 0...0).balances
+        Store.mutate { $0.trashRota = copy }
     }
 
-    private var weeksElapsed: Int {
-        let cal = Calendar(identifier: .gregorian)
-        let days = cal.dateComponents(
-            [.day], from: anchorMonday, to: Self.mondayOf(Date())
+    /// Tolerant of a document written before swaps and balances existed.
+    enum CodingKeys: String, CodingKey {
+        case people, me, anchorMonday, anchorIndex, swaps, balances
+    }
+
+    init() {}
+
+    init(from decoder: Decoder) throws {
+        let c = try decoder.container(keyedBy: CodingKeys.self)
+
+        func value<T: Decodable>(_ key: CodingKeys, _ fallback: T) -> T {
+            ((try? c.decodeIfPresent(T.self, forKey: key)) ?? nil) ?? fallback
+        }
+
+        people = value(.people, ["Me"])
+        me = value(.me, 0)
+        anchorMonday = value(.anchorMonday, TrashRota.mondayOf(Date()))
+        anchorIndex = value(.anchorIndex, 0)
+        swaps = value(.swaps, [])
+        balances = value(.balances, [:])
+    }
+
+    // MARK: The plain rotation
+
+    var currentWeek: Int { weekIndex(of: Date()) }
+
+    func weekIndex(of date: Date) -> Int {
+        let days = Self.gregorian.dateComponents(
+            [.day], from: anchorMonday, to: Self.mondayOf(date)
         ).day ?? 0
-        return days / 7
+        return Int((Double(days) / 7).rounded())
+    }
+
+    func monday(forWeek week: Int) -> Date {
+        Self.gregorian.date(
+            byAdding: .day, value: 7 * (week - currentWeek), to: Self.mondayOf(Date())
+        ) ?? Self.mondayOf(Date())
+    }
+
+    /// Whose turn it is before any credit is taken into account.
+    private func basePerson(_ week: Int) -> String {
+        guard !people.isEmpty else { return "—" }
+        let n = people.count
+        return people[((anchorIndex + week) % n + n) % n]
+    }
+
+    // MARK: The ledger
+
+    struct Ledger {
+        var assignee: [Int: String] = [:]
+        var balances: [String: Double] = [:]
+    }
+
+    /// Replays the weeks in order, settling up as it goes.
+    ///
+    /// A swap moves half a turn from the person who was due to the person who
+    /// stepped in. When the rotation then reaches somebody a whole turn in
+    /// credit, it skips them and hands the week to whoever is furthest in
+    /// debt, cancelling one turn on each side.
+    func ledger(covering span: ClosedRange<Int>) -> Ledger {
+        guard !people.isEmpty else { return Ledger() }
+
+        let now = currentWeek
+        let earliest = swaps.map { weekIndex(of: $0.date) }.min()
+        let first = max(min(earliest ?? now, now + min(span.lowerBound, 0)), now - Self.historyCap)
+        let last = now + max(span.upperBound, 0)
+        guard first <= last else { return Ledger() }
+
+        let byWeek = Dictionary(grouping: swaps) { weekIndex(of: $0.date) }
+        var ledger = Ledger()
+
+        for week in first...last {
+            let base = basePerson(week)
+            var who = base
+
+            if (ledger.balances[base] ?? 0) >= 1 - Self.epsilon {
+                ledger.balances[base, default: 0] -= 1
+
+                // Furthest into debt wins the week; ties go to rota order.
+                let owing = people.filter {
+                    $0 != base && (ledger.balances[$0] ?? 0) <= -Self.epsilon
+                }
+                if let debtor = owing.min(by: {
+                    (ledger.balances[$0] ?? 0) < (ledger.balances[$1] ?? 0)
+                }) {
+                    ledger.balances[debtor, default: 0] += 1
+                    who = debtor
+                } else {
+                    who = basePerson(week + 1)
+                }
+            }
+
+            ledger.assignee[week] = who
+
+            // Swaps land after the week is assigned: they settle at the
+            // next turn boundary, not the one they happened in.
+            for swap in byWeek[week] ?? [] {
+                ledger.balances[swap.didIt, default: 0] += Self.half
+                ledger.balances[swap.dueWas, default: 0] -= Self.half
+            }
+        }
+
+        ledger.balances = ledger.balances.filter { abs($0.value) > Self.epsilon }
+        return ledger
+    }
+
+    /// Live balances, derived rather than read back from the stored snapshot.
+    var currentBalances: [String: Double] {
+        ledger(covering: 0...0).balances
+    }
+
+    func balance(for name: String) -> Double {
+        currentBalances[name] ?? 0
     }
 
     func person(weeksAhead: Int = 0) -> String {
         guard !people.isEmpty else { return "—" }
-        let n = people.count
-        let index = ((anchorIndex + weeksElapsed + weeksAhead) % n + n) % n
-        return people[index]
+        let week = currentWeek + weeksAhead
+        let span = min(weeksAhead, 0)...max(weeksAhead, 0)
+        return ledger(covering: span).assignee[week] ?? basePerson(week)
     }
 
     var thisWeek: String { person() }
@@ -48,11 +203,111 @@ struct TrashRota: Codable {
         return thisWeek == people[me]
     }
 
+    // MARK: Phase
+
+    /// Re-phases so `name` holds the week `weeksAhead` from now, rather than
+    /// inferring the order from the order the names were typed in.
+    mutating func setPerson(_ name: String, weeksAhead: Int) {
+        guard !people.isEmpty, let index = people.firstIndex(of: name) else { return }
+        let n = people.count
+        anchorMonday = Self.mondayOf(Date())
+        anchorIndex = ((index - weeksAhead) % n + n) % n
+        save()
+    }
+
     mutating func setCurrent(to index: Int) {
         guard people.indices.contains(index) else { return }
+        setPerson(people[index], weeksAhead: 0)
+    }
+
+    /// Pins the anchor to whoever currently holds the base turn, so that
+    /// changing the shape of the list does not shuffle everyone along.
+    private mutating func rephase(onto name: String?) {
         anchorMonday = Self.mondayOf(Date())
-        anchorIndex = index
+        anchorIndex = name.flatMap { people.firstIndex(of: $0) } ?? 0
+    }
+
+    mutating func addPerson(_ name: String) {
+        let keep = basePerson(currentWeek)
+        people.append(name)
+        rephase(onto: keep)
         save()
+    }
+
+    mutating func removePerson(at index: Int) {
+        guard people.count > 1, people.indices.contains(index) else { return }
+
+        let removed = people[index]
+        let keep = basePerson(currentWeek)
+        let next = basePerson(currentWeek + 1)
+
+        people.remove(at: index)
+        if index == me {
+            me = 0
+        } else if index < me {
+            me -= 1
+        }
+
+        rephase(onto: keep == removed ? next : keep)
+        save()
+    }
+
+    // MARK: Corrections
+
+    /// The most recent collections, newest first, each with who was due.
+    func recentCollections(limit: Int = 4) -> [TrashCollection] {
+        let cal = Self.gregorian
+        let today = cal.startOfDay(for: Date())
+        var out: [TrashCollection] = []
+        var week = currentWeek
+
+        while out.count < limit && week > currentWeek - limit - 2 {
+            let monday = self.monday(forWeek: week)
+            let thursday = cal.date(byAdding: .day, value: 3, to: monday) ?? monday
+            let due = person(weeksAhead: week - currentWeek)
+
+            for day in [thursday, monday] where day <= today && out.count < limit {
+                out.append(
+                    TrashCollection(date: day, due: due, didIt: whoDid(on: day) ?? due)
+                )
+            }
+            week -= 1
+        }
+        return out
+    }
+
+    func whoDid(on day: Date) -> String? {
+        let cal = Self.gregorian
+        return swaps.first { cal.isDate($0.date, inSameDayAs: day) }?.didIt
+    }
+
+    /// Records who actually did a collection. Naming the person who was due
+    /// clears the correction, so following the schedule needs no logging.
+    mutating func record(_ who: String, for day: Date, due: String) {
+        let cal = Self.gregorian
+        let date = cal.startOfDay(for: day)
+
+        swaps.removeAll { cal.isDate($0.date, inSameDayAs: date) }
+        if who != due {
+            swaps.append(TrashSwap(date: date, didIt: who, dueWas: due))
+            swaps.sort { $0.date < $1.date }
+        }
+        save()
+    }
+
+    /// "½ owed", "1½ owing", or nothing at all when square.
+    static func balanceLabel(_ value: Double) -> String? {
+        guard abs(value) > epsilon else { return nil }
+
+        let size = abs(value)
+        let wholes = Int(size)
+        let hasHalf = size - Double(wholes) > epsilon
+
+        var amount = ""
+        if wholes > 0 { amount += "\(wholes)" }
+        if hasHalf { amount += "½" }
+
+        return "\(amount) \(value > 0 ? "owed" : "owing")"
     }
 }
 
@@ -217,6 +472,8 @@ struct TrashSheet: View {
                 ScrollView {
                     VStack(spacing: 18) {
                         weekPanel
+                        turnPanel
+                        collectionsPanel
                         peoplePanel
                         remindToggle
                     }
@@ -254,6 +511,97 @@ struct TrashSheet: View {
         .glassBackdrop(cornerRadius: 28, tint: Palette.bone.opacity(0.06))
     }
 
+    /// Says who is on which week outright, rather than leaving the phase to
+    /// be inferred from the order the names were typed in.
+    private var turnPanel: some View {
+        VStack(alignment: .leading, spacing: 12) {
+            Text("whose turn")
+                .font(.system(size: 9, weight: .black))
+                .tracking(1.6)
+                .foregroundStyle(Palette.bone.opacity(0.3))
+
+            turnRow("last week", offset: -1, person: rota.lastWeek)
+            turnRow("this week", offset: 0, person: rota.thisWeek)
+            turnRow("next week", offset: 1, person: rota.nextWeek)
+
+            Text("setting one of these re-phases the whole rotation")
+                .font(.system(size: 10, weight: .medium))
+                .foregroundStyle(Palette.bone.opacity(0.28))
+                .padding(.top, 2)
+        }
+        .padding(20)
+        .frame(maxWidth: .infinity, alignment: .leading)
+        .glassBackdrop(cornerRadius: 28, tint: Palette.bone.opacity(0.06))
+    }
+
+    private func turnRow(_ label: String, offset: Int, person: String) -> some View {
+        HStack(spacing: 10) {
+            Text(label)
+                .font(.system(size: 13, weight: .bold))
+                .foregroundStyle(Palette.bone.opacity(0.55))
+                .frame(width: 78, alignment: .leading)
+
+            PersonMenu(people: rota.people, selection: person) { name in
+                haptics.soft()
+                rota.setPerson(name, weeksAhead: offset)
+                Task { await TrashReminder.reschedule(rota) }
+            }
+
+            Spacer()
+        }
+    }
+
+    /// The last four collections, each already showing the person who was
+    /// due, so a correction is one tap and an ordinary week needs none.
+    private var collectionsPanel: some View {
+        VStack(alignment: .leading, spacing: 12) {
+            Text("who took them out")
+                .font(.system(size: 9, weight: .black))
+                .tracking(1.6)
+                .foregroundStyle(Palette.bone.opacity(0.3))
+
+            ForEach(rota.recentCollections()) { slot in
+                HStack(spacing: 10) {
+                    VStack(alignment: .leading, spacing: 1) {
+                        Text(Self.dayLabel.string(from: slot.date).lowercased())
+                            .font(.system(size: 13, weight: .bold))
+                            .foregroundStyle(Palette.bone.opacity(0.75))
+
+                        if slot.isCorrected {
+                            Text("\(slot.due.lowercased()) was due")
+                                .font(.system(size: 9, weight: .black))
+                                .tracking(1.1)
+                                .foregroundStyle(Palette.redHot.opacity(0.65))
+                        }
+                    }
+                    .frame(width: 92, alignment: .leading)
+
+                    PersonMenu(people: rota.people, selection: slot.didIt) { name in
+                        haptics.soft()
+                        rota.record(name, for: slot.date, due: slot.due)
+                        Task { await TrashReminder.reschedule(rota) }
+                    }
+
+                    Spacer()
+                }
+            }
+
+            Text("a turn is two collections, so standing in for one is half a turn")
+                .font(.system(size: 10, weight: .medium))
+                .foregroundStyle(Palette.bone.opacity(0.28))
+                .padding(.top, 2)
+        }
+        .padding(20)
+        .frame(maxWidth: .infinity, alignment: .leading)
+        .glassBackdrop(cornerRadius: 28, tint: Palette.bone.opacity(0.06))
+    }
+
+    private static let dayLabel: DateFormatter = {
+        let f = DateFormatter()
+        f.dateFormat = "EEE d MMM"
+        return f
+    }()
+
     private var peoplePanel: some View {
         VStack(alignment: .leading, spacing: 10) {
             Text("rotation")
@@ -282,6 +630,20 @@ struct TrashSheet: View {
                     Text(name)
                         .font(.system(size: 15, weight: .bold))
                         .foregroundStyle(Palette.bone.opacity(0.85))
+
+                    if let balance = TrashRota.balanceLabel(rota.balance(for: name)) {
+                        Text(balance)
+                            .font(.system(size: 9, weight: .black))
+                            .tracking(1.1)
+                            .foregroundStyle(
+                                rota.balance(for: name) > 0
+                                ? Palette.bone.opacity(0.45)
+                                : Palette.redHot.opacity(0.75)
+                            )
+                            .padding(.horizontal, 7)
+                            .padding(.vertical, 3)
+                            .background(Capsule().fill(Palette.steel))
+                    }
 
                     if index == rota.me {
                         Text("you")
@@ -379,9 +741,8 @@ struct TrashSheet: View {
 
     private func add() {
         let trimmed = newName.trimmingCharacters(in: .whitespaces)
-        guard !trimmed.isEmpty else { return }
-        rota.people.append(trimmed)
-        rota.save()
+        guard !trimmed.isEmpty, !rota.people.contains(trimmed) else { return }
+        rota.addPerson(trimmed)
         newName = ""
         nameFocused = false
         haptics.commit()
@@ -389,15 +750,46 @@ struct TrashSheet: View {
     }
 
     private func remove(at index: Int) {
-        guard rota.people.count > 1, rota.people.indices.contains(index) else { return }
-        let wasOn = rota.thisWeek
-        rota.people.remove(at: index)
-        if rota.me >= rota.people.count { rota.me = 0 }
-        if let still = rota.people.firstIndex(of: wasOn) {
-            rota.setCurrent(to: still)
-        } else {
-            rota.setCurrent(to: 0)
-        }
+        rota.removePerson(at: index)
         Task { await TrashReminder.reschedule(rota) }
+    }
+}
+
+// MARK: - Name picker
+
+struct PersonMenu: View {
+    let people: [String]
+    let selection: String
+    let onPick: (String) -> Void
+
+    var body: some View {
+        Menu {
+            ForEach(people, id: \.self) { name in
+                Button {
+                    onPick(name)
+                } label: {
+                    if name == selection {
+                        Label(name, systemImage: "checkmark")
+                    } else {
+                        Text(name)
+                    }
+                }
+            }
+        } label: {
+            HStack(spacing: 6) {
+                Text(selection)
+                    .font(.system(size: 14, weight: .bold))
+                    .foregroundStyle(Palette.bone.opacity(0.9))
+                    .lineLimit(1)
+
+                Image(systemName: "chevron.down")
+                    .font(.system(size: 8, weight: .black))
+                    .foregroundStyle(Palette.bone.opacity(0.35))
+            }
+            .padding(.horizontal, 12)
+            .frame(height: 32)
+            .background(Capsule().fill(Palette.steel))
+        }
+        .buttonStyle(.plain)
     }
 }
