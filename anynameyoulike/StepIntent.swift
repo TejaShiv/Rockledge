@@ -18,13 +18,12 @@ struct WriteBatch: Codable {
 
 enum WriteLedger {
     static func load() -> [WriteBatch] {
-        let file = Store.load(LedgerFile.self, from: Store.ledgerFile) ?? LedgerFile()
         let startOfDay = Calendar.current.startOfDay(for: Date())
-        return file.batches.filter { $0.date >= startOfDay }
+        return Store.document.stepLedger.filter { $0.date >= startOfDay }
     }
 
     static func save(_ batches: [WriteBatch]) {
-        Store.save(LedgerFile(batches: Array(batches.suffix(40))), to: Store.ledgerFile)
+        Store.mutate { $0.stepLedger = Array(batches.suffix(40)) }
     }
 
     static func append(_ batch: WriteBatch) {
@@ -32,7 +31,7 @@ enum WriteLedger {
     }
 
     static func clear() {
-        Store.save(LedgerFile(), to: Store.ledgerFile)
+        Store.mutate { $0.stepLedger = [] }
     }
 
     static var lastTotal: Int? { load().last?.total }

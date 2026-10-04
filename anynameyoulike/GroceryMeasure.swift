@@ -48,15 +48,18 @@ final class Pantry {
     init() { reload() }
 
     func reload() {
-        let file = Store.load(PantryFile.self, from: Store.pantryFile) ?? PantryFile()
-        items = file.items
+        let doc = Store.document
+        items = doc.groceryItems
 
         let cutoff = Calendar.current.date(byAdding: .day, value: -45, to: Date()) ?? Date()
-        log = file.log.filter { $0.date >= cutoff }
+        log = doc.useLog.filter { $0.date >= cutoff }
     }
 
     func save() {
-        Store.save(PantryFile(items: items, log: log), to: Store.pantryFile)
+        Store.mutate {
+            $0.groceryItems = items
+            $0.useLog = log
+        }
     }
 
     // MARK: Rate

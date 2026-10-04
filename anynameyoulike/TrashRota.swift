@@ -17,11 +17,11 @@ struct TrashRota: Codable {
     }
 
     static func load() -> TrashRota {
-        Store.load(TrashRota.self, from: Store.rotaFile) ?? TrashRota()
+        Store.document.trashRota
     }
 
     func save() {
-        Store.save(self, to: Store.rotaFile)
+        Store.mutate { $0.trashRota = self }
     }
 
     private var weeksElapsed: Int {

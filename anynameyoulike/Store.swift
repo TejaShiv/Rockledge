@@ -8,102 +8,172 @@
 
 import Foundation
 
-/// Every durable record lives as a JSON file in Documents, so it is visible
+/// Everything durable lives in one JSON file in Documents, so it is visible
 /// in the Files app, editable by hand, and included in device backups.
+///
+/// Preferences — reminder toggles and times — stay in UserDefaults. They are
+/// settings rather than records, and nothing is lost if they reset.
 enum Store {
-    static let pantryFile = "pantry.json"
-    static let rotaFile = "rota.json"
-    static let ledgerFile = "ledger.json"
+    static let fileName = "kalla.json"
 
-    private static let migratedKey = "storeMigratedV1"
-    private static var checked = false
+    private static let migratedKey = "storeMigratedV2"
+    private static var cache: Document?
 
     static var folder: URL {
         FileManager.default.urls(for: .documentDirectory, in: .userDomainMask)[0]
     }
 
-    private static func url(_ name: String) -> URL {
-        folder.appendingPathComponent(name)
+    static var url: URL { folder.appendingPathComponent(fileName) }
+
+    // MARK: The document
+
+    /// One top-level object. Keys decode independently, so a hand-edited file
+    /// that is missing a section still opens, with that section empty.
+    struct Document: Codable {
+        var version = 1
+        var savedAt = Date()
+        var groceryItems: [GroceryItem] = []
+        var useLog: [UseEntry] = []
+        var trashRota = TrashRota()
+        var stepLedger: [WriteBatch] = []
+
+        init() {}
+
+        enum CodingKeys: String, CodingKey {
+            case version, savedAt, groceryItems, useLog, trashRota, stepLedger
+        }
+
+        init(from decoder: Decoder) throws {
+            let c = try decoder.container(keyedBy: CodingKeys.self)
+
+            func value<T: Decodable>(_ key: CodingKeys, _ fallback: T) -> T {
+                ((try? c.decodeIfPresent(T.self, forKey: key)) ?? nil) ?? fallback
+            }
+
+            version = value(.version, 1)
+            savedAt = value(.savedAt, Date())
+            groceryItems = value(.groceryItems, [])
+            useLog = value(.useLog, [])
+            trashRota = value(.trashRota, TrashRota())
+            stepLedger = value(.stepLedger, [])
+        }
     }
 
     // MARK: Read and write
 
-    static func load<T: Decodable>(_ type: T.Type, from name: String) -> T? {
+    /// Cached, so repeated reads in one session do not touch the disk.
+    static var document: Document {
+        if let cache { return cache }
         migrateIfNeeded()
-        guard let data = try? Data(contentsOf: url(name)) else { return nil }
+        let loaded = read() ?? Document()
+        cache = loaded
+        return loaded
+    }
 
-        let decoder = JSONDecoder()
-        decoder.dateDecodingStrategy = .iso8601
-        return try? decoder.decode(T.self, from: data)
+    /// The only way to change anything: edit the document, then write it whole.
+    static func mutate(_ body: (inout Document) -> Void) {
+        var doc = document
+        body(&doc)
+        doc.savedAt = Date()
+        cache = doc
+        write(doc)
+    }
+
+    private static func read() -> Document? {
+        guard let data = try? Data(contentsOf: url) else { return nil }
+        return try? decoder().decode(Document.self, from: data)
     }
 
     @discardableResult
-    static func save<T: Encodable>(_ value: T, to name: String) -> Bool {
+    private static func write(_ doc: Document) -> Bool {
         let encoder = JSONEncoder()
         encoder.outputFormatting = [.prettyPrinted, .sortedKeys]
         encoder.dateEncodingStrategy = .iso8601
 
-        guard let data = try? encoder.encode(value) else { return false }
-        do {
-            try data.write(to: url(name), options: .atomic)
-            return true
-        } catch {
-            return false
-        }
+        guard let data = try? encoder.encode(doc) else { return false }
+        return (try? data.write(to: url, options: .atomic)) != nil
     }
 
-    // MARK: One-time move out of UserDefaults
+    private static func decoder() -> JSONDecoder {
+        let decoder = JSONDecoder()
+        decoder.dateDecodingStrategy = .iso8601
+        return decoder
+    }
 
-    /// Old data was written with the default date strategy, so it needs a
-    /// plain decoder rather than the iso8601 one used for the files.
-    private static func legacy<T: Decodable>(_ type: T.Type, key: String) -> T? {
+    // MARK: One-time consolidation
+
+    /// Pulls records out of the two older layouts — the per-area JSON files,
+    /// and before those the UserDefaults blobs — then clears both.
+    private static func migrateIfNeeded() {
+        let defaults = UserDefaults.standard
+        guard !defaults.bool(forKey: migratedKey) else { return }
+        defer { defaults.set(true, forKey: migratedKey) }
+
+        // Already consolidated by hand, or a fresh install that wrote first.
+        guard !FileManager.default.fileExists(atPath: url.path) else {
+            discardOldStorage()
+            return
+        }
+
+        var doc = Document()
+
+        // Per-area files won, where they exist: that was the newer layout.
+        if let pantry = legacyFile(PantryFile.self, named: "pantry.json") {
+            doc.groceryItems = pantry.items
+            doc.useLog = pantry.log
+        } else {
+            doc.groceryItems = legacyDefaults([GroceryItem].self, key: "groceryItems") ?? []
+            doc.useLog = legacyDefaults([UseEntry].self, key: "groceryLog") ?? []
+        }
+
+        if let rota = legacyFile(TrashRota.self, named: "rota.json") {
+            doc.trashRota = rota
+        } else if let rota = legacyDefaults(TrashRota.self, key: "trashRota") {
+            doc.trashRota = rota
+        }
+
+        if let ledger = legacyFile(LedgerFile.self, named: "ledger.json") {
+            doc.stepLedger = ledger.batches
+        } else {
+            doc.stepLedger = legacyDefaults([WriteBatch].self, key: "writeBatches") ?? []
+        }
+
+        write(doc)
+        discardOldStorage()
+    }
+
+    /// Old files were written with the iso8601 strategy, same as the new one.
+    private static func legacyFile<T: Decodable>(_ type: T.Type, named name: String) -> T? {
+        let old = folder.appendingPathComponent(name)
+        guard let data = try? Data(contentsOf: old) else { return nil }
+        return try? decoder().decode(T.self, from: data)
+    }
+
+    /// Old UserDefaults blobs were written with the default date strategy, so
+    /// they need a plain decoder rather than the iso8601 one.
+    private static func legacyDefaults<T: Decodable>(_ type: T.Type, key: String) -> T? {
         guard let data = UserDefaults.standard.data(forKey: key) else { return nil }
         return try? JSONDecoder().decode(T.self, from: data)
     }
 
-    private static func migrateIfNeeded() {
-        guard !checked else { return }
-        checked = true
-
+    private static func discardOldStorage() {
+        for name in ["pantry.json", "rota.json", "ledger.json"] {
+            try? FileManager.default.removeItem(at: folder.appendingPathComponent(name))
+        }
         let defaults = UserDefaults.standard
-        guard !defaults.bool(forKey: migratedKey) else { return }
-
-        var pantry = PantryFile()
-        if let items = legacy([GroceryItem].self, key: "groceryItems") {
-            pantry.items = items
+        for key in ["groceryItems", "groceryLog", "trashRota", "writeBatches", "storeMigratedV1"] {
+            defaults.removeObject(forKey: key)
         }
-        if let log = legacy([UseEntry].self, key: "groceryLog") {
-            pantry.log = log
-        }
-        if !pantry.items.isEmpty || !pantry.log.isEmpty {
-            save(pantry, to: pantryFile)
-        }
-
-        if let rota = legacy(TrashRota.self, key: "trashRota") {
-            save(rota, to: rotaFile)
-        }
-
-        if let batches = legacy([WriteBatch].self, key: "writeBatches") {
-            save(LedgerFile(batches: batches), to: ledgerFile)
-        }
-
-        defaults.removeObject(forKey: "groceryItems")
-        defaults.removeObject(forKey: "groceryLog")
-        defaults.removeObject(forKey: "trashRota")
-        defaults.removeObject(forKey: "writeBatches")
-        defaults.set(true, forKey: migratedKey)
     }
 }
 
-// MARK: - File shapes
+// MARK: - Shapes of the superseded per-area files
 
-struct PantryFile: Codable {
-    var version = 1
+private struct PantryFile: Codable {
     var items: [GroceryItem] = []
     var log: [UseEntry] = []
 }
 
-struct LedgerFile: Codable {
-    var version = 1
+private struct LedgerFile: Codable {
     var batches: [WriteBatch] = []
 }
