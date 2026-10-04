@@ -1,0 +1,15 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
+<plist version="1.0">
+<dict>
+	<!-- Exposes Documents in the Files app, so kalla.json can be read and
+	     edited by hand. Xcode generates the rest of this file from the
+	     INFOPLIST_KEY_* build settings and merges it over these keys;
+	     UIFileSharingEnabled has no such setting, which is why the file
+	     exists at all. -->
+	<key>UIFileSharingEnabled</key>
+	<true/>
+	<key>LSSupportsOpeningDocumentsInPlace</key>
+	<true/>
+</dict>
+</plist>

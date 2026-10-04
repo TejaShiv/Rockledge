@@ -29,9 +29,22 @@
 		96239FAF3065C59F00D4DFC7 /* anynameyoulikeUITests.xctest */ = {isa = PBXFileReference; explicitFileType = wrapper.cfbundle; includeInIndex = 0; path = anynameyoulikeUITests.xctest; sourceTree = BUILT_PRODUCTS_DIR; };
 /* End PBXFileReference section */
 
+/* Begin PBXFileSystemSynchronizedBuildFileExceptionSet section */
+		96239FC03065C59D00D4DFC7 /* Exceptions for "anynameyoulike" folder in "anynameyoulike" target */ = {
+			isa = PBXFileSystemSynchronizedBuildFileExceptionSet;
+			membershipExceptions = (
+				Info.plist,
+			);
+			target = 96239F953065C59D00D4DFC7 /* anynameyoulike */;
+		};
+/* End PBXFileSystemSynchronizedBuildFileExceptionSet section */
+
 /* Begin PBXFileSystemSynchronizedRootGroup section */
 		96239F983065C59D00D4DFC7 /* anynameyoulike */ = {
 			isa = PBXFileSystemSynchronizedRootGroup;
+			exceptions = (
+				96239FC03065C59D00D4DFC7 /* Exceptions for "anynameyoulike" folder in "anynameyoulike" target */,
+			);
 			path = anynameyoulike;
 			sourceTree = "<group>";
 		};
@@ -401,6 +414,7 @@
 				DEVELOPMENT_TEAM = 3ZGWU8FGTY;
 				ENABLE_PREVIEWS = YES;
 				GENERATE_INFOPLIST_FILE = YES;
+				INFOPLIST_FILE = anynameyoulike/Info.plist;
 				INFOPLIST_KEY_CFBundleDisplayName = "  ";
 				INFOPLIST_KEY_NSBluetoothAlwaysUsageDescription = "Scans for fitness bands";
 				INFOPLIST_KEY_NSHealthShareUsageDescription = "Used to log step data.";
@@ -438,6 +452,7 @@
 				DEVELOPMENT_TEAM = 3ZGWU8FGTY;
 				ENABLE_PREVIEWS = YES;
 				GENERATE_INFOPLIST_FILE = YES;
+				INFOPLIST_FILE = anynameyoulike/Info.plist;
 				INFOPLIST_KEY_CFBundleDisplayName = "  ";
 				INFOPLIST_KEY_NSBluetoothAlwaysUsageDescription = "Scans for fitness bands";
 				INFOPLIST_KEY_NSHealthShareUsageDescription = "Used to log step data.";
