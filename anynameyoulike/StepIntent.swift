@@ -174,6 +174,12 @@ enum UndoOutcome {
 struct StepWriter {
     private let healthStore = HKHealthStore()
 
+    /// App Intents run `perform` off the main actor, and the project defaults
+    /// types to @MainActor, so constructing one there needs this. The methods
+    /// stay on the main actor: they reach Store, whose cache is unsynchronised
+    /// and safe only because every caller is already there.
+    nonisolated init() {}
+
     private var stepType: HKQuantityType? {
         HKQuantityType.quantityType(forIdentifier: .stepCount)
     }
