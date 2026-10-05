@@ -9,12 +9,27 @@ nonisolated struct TransitStop: Codable, Equatable, Identifiable {
     var latitude: Double
     var longitude: Double
 
-    /// The home stop, used when location is refused or unavailable.
+    /// The stop on the other side of the road, where there is one. Boston
+    /// bus stops come in pairs with separate ids, and only together do they
+    /// give you both directions.
+    var pairedWith: String?
+
+    /// Every id to ask about. One request covers both sides.
+    var queryIDs: [String] {
+        pairedWith.map { [id, $0] } ?? [id]
+    }
+
+    var isPaired: Bool { pairedWith != nil }
+
+    /// The home stop, already paired with the far side of Malcolm X Blvd,
+    /// since location being off must not cost you a direction. The point is
+    /// midway between the two.
     static let fallback = TransitStop(
         id: "11149",
         name: "Malcolm X Blvd @ O'Bryant HS",
-        latitude: 42.330732,
-        longitude: -71.08842
+        latitude: 42.3307665,
+        longitude: -71.0888135,
+        pairedWith: "11323"
     )
 }
 
@@ -197,7 +212,7 @@ nonisolated enum MBTA {
         ])
 
         let page = try decoder.decode(Page<StopResource>.self, from: data)
-        return page.data.compactMap { resource in
+        let found = page.data.compactMap { resource -> TransitStop? in
             guard let lat = resource.attributes.latitude,
                   let lon = resource.attributes.longitude else { return nil }
             return TransitStop(
@@ -205,6 +220,7 @@ nonisolated enum MBTA {
                 latitude: lat, longitude: lon
             )
         }
+        return paired(found)
     }
 
     /// The nearest stop, breaking a tie on whichever has a bus coming soonest.
@@ -219,17 +235,78 @@ nonisolated enum MBTA {
         guard let closest = tied.first else { return nil }
 
         guard tied.count > 1 else {
-            return (closest, try await arrivals(at: closest.id))
+            return (closest, try await arrivals(at: closest.queryIDs))
         }
 
         var options: [(stop: TransitStop, arrivals: [TransitArrival])] = []
         for stop in tied {
-            options.append((stop, (try? await arrivals(at: stop.id)) ?? []))
+            options.append((stop, (try? await arrivals(at: stop.queryIDs)) ?? []))
         }
 
         // Everything tied is equally close, so with no predictions anywhere
         // the first one is as good an answer as any.
         return soonest(among: options) ?? (closest, [])
+    }
+
+    /// Two stops of a pair are never further apart than a wide road.
+    static let pairMetres = 150.0
+
+    /// Folds each side of a road into one stop.
+    ///
+    /// The API has nothing to say about this: `parent_station` is null for
+    /// bus stops, and `connecting_stops`, `child_stops` and
+    /// `recommended_transfers` are all accepted as includes but come back
+    /// empty. So it goes on the naming convention, which is consistent —
+    /// "Street @ Cross" against "Street opp Cross" — with a distance guard,
+    /// because the same name turns up at genuinely different places (two
+    /// "Tremont St @ Columbus Ave" stops sit 840m apart).
+    ///
+    /// Only groups of exactly two merge. Ten stops share the name "Ruggles":
+    /// that is a station's worth of berths, not a pair, and guessing which
+    /// two to join would be worse than leaving them alone.
+    static func paired(_ stops: [TransitStop]) -> [TransitStop] {
+        var groups: [String: [TransitStop]] = [:]
+        var order: [String] = []
+
+        for stop in stops {
+            let key = pairingKey(stop.name)
+            if groups[key] == nil { order.append(key) }
+            groups[key, default: []].append(stop)
+        }
+
+        return order.flatMap { key -> [TransitStop] in
+            let group = groups[key] ?? []
+            guard group.count == 2 else { return group }
+
+            let (a, b) = (group[0], group[1])
+            let apart = distance(a.latitude, a.longitude, b.latitude, b.longitude)
+            guard apart < pairMetres else { return group }
+
+            // The "@" side names the pair; "opp" only means "the other one".
+            let near = a.name.range(of: " opp ", options: .caseInsensitive) == nil ? a : b
+            let far = near.id == a.id ? b : a
+
+            return [TransitStop(
+                id: near.id,
+                name: near.name,
+                latitude: (a.latitude + b.latitude) / 2,
+                longitude: (a.longitude + b.longitude) / 2,
+                pairedWith: far.id
+            )]
+        }
+    }
+
+    /// Names that differ only by which side of the road they are on collapse
+    /// to the same key.
+    static func pairingKey(_ name: String) -> String {
+        name
+            .replacingOccurrences(of: " opposite ", with: " @ ",
+                                  options: .caseInsensitive)
+            .replacingOccurrences(of: " opp ", with: " @ ",
+                                  options: .caseInsensitive)
+            .lowercased()
+            .split(separator: " ")
+            .joined(separator: " ")
     }
 
     /// The stops that count as equally near, nearest first.
@@ -286,10 +363,15 @@ nonisolated enum MBTA {
 
     // MARK: Arrivals
 
-    /// Every predicted arrival at a stop, both directions, soonest first.
-    static func arrivals(at stopID: String) async throws -> [TransitArrival] {
+    /// Every predicted arrival at a stop, soonest first.
+    ///
+    /// Takes every id the stop covers, so a paired stop returns both sides of
+    /// the road in one request rather than one direction and a guess.
+    static func arrivals(at stopIDs: [String]) async throws -> [TransitArrival] {
+        guard !stopIDs.isEmpty else { return [] }
+
         let data = try await get("/predictions", [
-            "filter[stop]": stopID,
+            "filter[stop]": stopIDs.joined(separator: ","),
             "include": "route,trip",
             "sort": "time",
             "page[limit]": "40",

@@ -7,7 +7,12 @@ import Testing
 struct TransitTests {
 
     // Real coordinates around the home stop, so the numbers mean something.
-    private let home = TransitStop.fallback                       // 11149
+    // This is 11149 itself, not TransitStop.fallback: the fallback is the
+    // paired stop and sits midway between the two sides.
+    private let home = TransitStop(
+        id: "11149", name: "Malcolm X Blvd @ O'Bryant HS",
+        latitude: 42.330732, longitude: -71.08842
+    )
     private let opposite = TransitStop(                           // 11323, across the road
         id: "11323", name: "Malcolm X Blvd opp O'Bryant HS",
         latitude: 42.330801, longitude: -71.089207
@@ -180,5 +185,108 @@ struct TransitTests {
     @Test func searchesWideEnoughForADenseArea() {
         #expect(MBTA.searchRadius >= 0.01)
         #expect(MBTA.tieMetres > 0 && MBTA.tieMetres < 50)
+    }
+
+    // MARK: Pairing the two sides of a road
+
+    /// The real pair on Malcolm X Blvd, as the API returns them.
+    private var obryantSides: [TransitStop] {
+        [
+            stop("11149", 42.330732, -71.088420),
+            stop("11323", 42.330801, -71.089207),
+        ].enumerated().map { index, s in
+            var named = s
+            named.name = index == 0
+                ? "Malcolm X Blvd @ O'Bryant HS"
+                : "Malcolm X Blvd opp O'Bryant HS"
+            return named
+        }
+    }
+
+    @Test func foldsTwoSidesOfARoadIntoOneStop() {
+        let merged = MBTA.paired(obryantSides)
+
+        #expect(merged.count == 1)
+        #expect(merged.first?.id == "11149")
+        #expect(merged.first?.pairedWith == "11323")
+        #expect(merged.first?.isPaired == true)
+    }
+
+    @Test func aPairedStopAsksAboutBothIds() {
+        let merged = MBTA.paired(obryantSides).first
+
+        #expect(merged?.queryIDs == ["11149", "11323"])
+    }
+
+    @Test func anUnpairedStopAsksAboutItselfOnly() {
+        let lone = stop("999", 42.33, -71.09)
+
+        #expect(MBTA.paired([lone]).first?.queryIDs == ["999"])
+        #expect(MBTA.paired([lone]).first?.isPaired == false)
+    }
+
+    /// The "@" side names the pair: "opp" only says which one it is not.
+    @Test func thePairTakesTheNameOfTheNearSide() {
+        let merged = MBTA.paired(obryantSides.reversed())
+
+        #expect(merged.first?.name == "Malcolm X Blvd @ O'Bryant HS")
+        #expect(merged.first?.id == "11149")
+    }
+
+    @Test func thePairSitsBetweenItsTwoSides() {
+        let merged = MBTA.paired(obryantSides).first
+
+        #expect(merged?.latitude == (42.330732 + 42.330801) / 2)
+        #expect(merged?.longitude == (-71.088420 + -71.089207) / 2)
+    }
+
+    /// Two stops really can share a name and be nowhere near each other —
+    /// there are two "Tremont St @ Columbus Ave" 840m apart.
+    @Test func doesNotPairTheSameNameFarApart() {
+        var near = stop("a", 42.330, -71.090); near.name = "Tremont St @ Columbus Ave"
+        var far = stop("b", 42.3376, -71.090); far.name = "Tremont St @ Columbus Ave"
+
+        let merged = MBTA.paired([near, far])
+
+        #expect(merged.count == 2)
+        #expect(merged.allSatisfy { !$0.isPaired })
+    }
+
+    /// Ten stops are called "Ruggles". That is a station, not a pair, and
+    /// picking two of them would be arbitrary.
+    @Test func leavesGroupsBiggerThanAPairAlone() {
+        let berths = (0..<10).map { index -> TransitStop in
+            var s = stop("r\(index)", 42.3362 + Double(index) * 0.00005, -71.0892)
+            s.name = "Ruggles"
+            return s
+        }
+
+        let merged = MBTA.paired(berths)
+
+        #expect(merged.count == 10)
+        #expect(merged.allSatisfy { !$0.isPaired })
+    }
+
+    @Test func pairingKeyIgnoresWhichSideOfTheRoad() {
+        #expect(MBTA.pairingKey("Malcolm X Blvd @ O'Bryant HS")
+                == MBTA.pairingKey("Malcolm X Blvd opp O'Bryant HS"))
+        #expect(MBTA.pairingKey("Centre St @ Cedar St")
+                == MBTA.pairingKey("Centre St  OPP  Cedar St"))
+        #expect(MBTA.pairingKey("Washington St @ Cedar St")
+                != MBTA.pairingKey("Washington St @ Ruggles St"))
+    }
+
+    @Test func theHomeStopShipsAlreadyPaired() {
+        #expect(TransitStop.fallback.isPaired)
+        #expect(TransitStop.fallback.queryIDs == ["11149", "11323"])
+    }
+
+    @Test func pairingKeepsEveryStopItWasGiven() {
+        let all = obryantSides + [stop("x", 42.34, -71.10), stop("y", 42.35, -71.11)]
+
+        let merged = MBTA.paired(all)
+        let covered = merged.flatMap(\.queryIDs)
+
+        #expect(Set(covered) == Set(all.map(\.id)))
     }
 }

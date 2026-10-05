@@ -98,7 +98,11 @@ final class Transit {
     private(set) var selectedStop: TransitStop?
 
     var stop: TransitStop? { selectedStop ?? baseStop }
-    var isOnHomeStop: Bool { stop?.id == TransitStop.fallback.id }
+    /// True when the home stop is either side of what is showing, so the
+    /// star reads the same whichever side of the road the pair is named for.
+    var isOnHomeStop: Bool {
+        stop?.queryIDs.contains(TransitStop.fallback.id) == true
+    }
 
     /// Bus stops around you, nearest first, for the picker.
     private(set) var nearbyStops: [TransitStop] = []
@@ -156,11 +160,20 @@ final class Transit {
 
     var next: TransitArrival? { upcoming.first }
 
-    /// The two directions, each with where that way ends up, soonest first.
-    var byDirection: [(direction: String, arrivals: [TransitArrival])] {
-        Dictionary(grouping: upcoming, by: \.directionID)
-            .sorted { $0.key < $1.key }
-            .map { (($0.value.first?.direction ?? "—"), $0.value) }
+    /// Arrivals grouped by where they are actually going, soonest group
+    /// first.
+    ///
+    /// Not by direction_id: that is numbered per route, so route 66's "0" and
+    /// route 28's "0" have nothing to do with each other, and a section
+    /// headed with the first arrival's destination would misdescribe the
+    /// rest. The headsign is the one thing that means the same for everyone.
+    var byDestination: [(destination: String, arrivals: [TransitArrival])] {
+        Dictionary(grouping: upcoming, by: \.headsign)
+            .map { (destination: $0.key, arrivals: $0.value.sorted { $0.time < $1.time }) }
+            .sorted { lhs, rhs in
+                (lhs.arrivals.first?.time ?? .distantFuture)
+                    < (rhs.arrivals.first?.time ?? .distantFuture)
+            }
     }
 
     // MARK: Refreshing
@@ -226,7 +239,7 @@ final class Transit {
         }
 
         do {
-            let found = try await MBTA.arrivals(at: target.id)
+            let found = try await MBTA.arrivals(at: target.queryIDs)
             finish(stop: target, arrivals: found, fallback: fellBack || usedFallback)
         } catch {
             // Keep whatever is already on screen and mark it as old.
@@ -260,7 +273,7 @@ final class Transit {
         vehicles = []
 
         do {
-            let found = try await MBTA.arrivals(at: stop.id)
+            let found = try await MBTA.arrivals(at: stop.queryIDs)
             arrivals = found
             fetchedAt = Date()
             isStale = false

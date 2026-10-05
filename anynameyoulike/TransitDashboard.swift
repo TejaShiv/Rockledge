@@ -196,11 +196,20 @@ struct TransitDashboard: View {
                                 : Palette.bone.opacity(0.25)
                             )
 
-                        Text(stop.name)
-                            .font(.system(size: 14, weight: .bold))
-                            .lineLimit(1)
-                            .multilineTextAlignment(.leading)
-                            .foregroundStyle(Palette.bone.opacity(0.85))
+                        VStack(alignment: .leading, spacing: 1) {
+                            Text(stop.name)
+                                .font(.system(size: 14, weight: .bold))
+                                .lineLimit(1)
+                                .multilineTextAlignment(.leading)
+                                .foregroundStyle(Palette.bone.opacity(0.85))
+
+                            if stop.isPaired {
+                                Text("both sides")
+                                    .font(.system(size: 8, weight: .black))
+                                    .tracking(1)
+                                    .foregroundStyle(Palette.bone.opacity(0.28))
+                            }
+                        }
 
                         Spacer(minLength: 8)
 
@@ -485,18 +494,18 @@ struct TransitDashboard: View {
 
     // MARK: Both directions
 
-    /// Both ways, each under where it ends up, rather than guessing which one
-    /// you wanted and hiding the other.
+    /// Every way out of here, each under where it actually goes, rather than
+    /// guessing which one you wanted and hiding the other.
     private var directionsPanel: some View {
         VStack(alignment: .leading, spacing: 16) {
-            ForEach(transit.byDirection, id: \.direction) { group in
+            ForEach(transit.byDestination, id: \.destination) { group in
                 VStack(alignment: .leading, spacing: 10) {
                     HStack(spacing: 6) {
                         Image(systemName: "arrow.right")
                             .font(.system(size: 9, weight: .black))
                             .foregroundStyle(Palette.redHot.opacity(0.6))
 
-                        Text("towards \(group.direction.lowercased())")
+                        Text("towards \(group.destination.lowercased())")
                             .font(.system(size: 9, weight: .black))
                             .tracking(1.4)
                             .foregroundStyle(Palette.bone.opacity(0.35))
@@ -511,7 +520,7 @@ struct TransitDashboard: View {
         .padding(20)
         .frame(maxWidth: .infinity, alignment: .leading)
         .glassBackdrop(cornerRadius: 28, tint: Palette.bone.opacity(0.06))
-        .opacity(transit.byDirection.isEmpty ? 0 : 1)
+        .opacity(transit.byDestination.isEmpty ? 0 : 1)
     }
 
     private static let clock: DateFormatter = {
