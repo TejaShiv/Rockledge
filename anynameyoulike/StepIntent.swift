@@ -4,12 +4,12 @@ import UserNotifications
 
 // MARK: - Write ledger
 
-struct SampleRef: Codable {
+nonisolated struct SampleRef: Codable {
     let id: UUID
     let amount: Int
 }
 
-struct WriteBatch: Codable {
+nonisolated struct WriteBatch: Codable {
     let date: Date
     let samples: [SampleRef]
 
@@ -176,8 +176,8 @@ struct StepWriter {
 
     /// App Intents run `perform` off the main actor, and the project defaults
     /// types to @MainActor, so constructing one there needs this. The methods
-    /// stay on the main actor: they reach Store, whose cache is unsynchronised
-    /// and safe only because every caller is already there.
+    /// stay on the main actor, which costs a hop from the intent and nothing
+    /// in the app. Store itself is safe from either side.
     nonisolated init() {}
 
     private var stepType: HKQuantityType? {

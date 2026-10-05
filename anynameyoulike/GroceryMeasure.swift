@@ -4,7 +4,7 @@ import UserNotifications
 
 // MARK: - Model
 
-enum GroceryMeasure: String, Codable, CaseIterable, Identifiable {
+nonisolated enum GroceryMeasure: String, Codable, CaseIterable, Identifiable {
     case count, weigh
 
     var id: String { rawValue }
@@ -14,7 +14,7 @@ enum GroceryMeasure: String, Codable, CaseIterable, Identifiable {
     }
 }
 
-struct GroceryItem: Identifiable, Codable {
+nonisolated struct GroceryItem: Identifiable, Codable {
     var id = UUID()
     var name: String
     var measure: GroceryMeasure
@@ -31,7 +31,7 @@ struct GroceryItem: Identifiable, Codable {
     }
 }
 
-struct UseEntry: Identifiable, Codable {
+nonisolated struct UseEntry: Identifiable, Codable {
     var id = UUID()
     var itemID: UUID
     var date: Date

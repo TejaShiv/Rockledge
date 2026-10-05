@@ -7,17 +7,23 @@
 
 
 import Foundation
+import Synchronization
 
 /// Everything durable lives in one JSON file in Documents, so it is visible
 /// in the Files app, editable by hand, and included in device backups.
 ///
 /// Preferences — reminder toggles and times — stay in UserDefaults. They are
 /// settings rather than records, and nothing is lost if they reset.
-enum Store {
+///
+/// Safe to reach from any actor. The cache lives inside a lock rather than
+/// beside one, so there is no way to touch it without holding the lock.
+nonisolated enum Store {
     static let fileName = "kalla.json"
 
     private static let migratedKey = "storeMigratedV2"
-    private static var cache: Document?
+
+    /// Holds the loaded document, or nil before the first read.
+    private static let cache = Mutex<Document?>(nil)
 
     static var folder: URL {
         FileManager.default.urls(for: .documentDirectory, in: .userDomainMask)[0]
@@ -63,20 +69,33 @@ enum Store {
 
     /// Cached, so repeated reads in one session do not touch the disk.
     static var document: Document {
-        if let cache { return cache }
-        migrateIfNeeded()
-        let loaded = read() ?? Document()
-        cache = loaded
-        return loaded
+        cache.withLock { loaded(&$0) }
     }
 
     /// The only way to change anything: edit the document, then write it whole.
+    ///
+    /// The whole read-modify-write runs under the lock, the file included, so
+    /// concurrent callers cannot lose one another's changes and the file never
+    /// lands in an order the cache disagrees with. `body` must not call back
+    /// into Store: the lock is not recursive.
     static func mutate(_ body: (inout Document) -> Void) {
-        var doc = document
-        body(&doc)
-        doc.savedAt = Date()
-        cache = doc
-        write(doc)
+        cache.withLock { slot in
+            var doc = loaded(&slot)
+            body(&doc)
+            doc.savedAt = Date()
+            slot = doc
+            write(doc)
+        }
+    }
+
+    /// The cached document, reading it in on first use. Only ever called with
+    /// the lock held, which is what `inout` on the cache slot stands for.
+    private static func loaded(_ slot: inout Document?) -> Document {
+        if let slot { return slot }
+        migrateIfNeeded()
+        let doc = read() ?? Document()
+        slot = doc
+        return doc
     }
 
     private static func read() -> Document? {
@@ -169,11 +188,11 @@ enum Store {
 
 // MARK: - Shapes of the superseded per-area files
 
-private struct PantryFile: Codable {
+private nonisolated struct PantryFile: Codable {
     var items: [GroceryItem] = []
     var log: [UseEntry] = []
 }
 
-private struct LedgerFile: Codable {
+private nonisolated struct LedgerFile: Codable {
     var batches: [WriteBatch] = []
 }

@@ -8,7 +8,7 @@ import UserNotifications
 /// `people` is the cycle, in order. The anchor says which of them holds which
 /// week. Nothing is inferred from who actually took the bins out: the only
 /// way the rotation changes is somebody saying so.
-struct TrashRota: Codable {
+nonisolated struct TrashRota: Codable {
     var people: [String] = ["Me"]
     var me: Int = 0
     var anchorMonday: Date = TrashRota.mondayOf(Date())
