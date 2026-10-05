@@ -119,6 +119,11 @@ final class Transit {
     /// Often enough to see a bus move, rarely enough not to cook the battery.
     private let pollEvery: Duration = .seconds(12)
 
+    /// Both sides of a road are separate stops, so a useful list needs room
+    /// for pairs. Thirty covers roughly a quarter-mile in Roxbury and every
+    /// stop within the search radius somewhere quieter.
+    private static let stopsShown = 30
+
     /// Showing the home stop because location was refused or unavailable.
     private(set) var usedFallback = false
 
@@ -239,6 +244,9 @@ final class Transit {
             MBTA.distance(origin.latitude, origin.longitude, $0.latitude, $0.longitude)
                 < MBTA.distance(origin.latitude, origin.longitude, $1.latitude, $1.longitude)
         }
+        // Cut the list down only after it is in order, so the cap drops the
+        // furthest stops rather than whichever ones the server ranked last.
+        nearbyStops = Array(nearbyStops.prefix(Self.stopsShown))
     }
 
     // MARK: Picking a stop

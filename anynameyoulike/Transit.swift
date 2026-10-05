@@ -136,7 +136,16 @@ nonisolated enum MBTA {
 
     /// Stops closer together than this are treated as the same distance, and
     /// the tie is broken on whichever has a bus coming sooner.
-    private static let tieMetres = 15.0
+    static let tieMetres = 15.0
+
+    /// Degrees, not metres: the API treats latitude and longitude as a flat
+    /// plane, where 0.02 is about a mile. 0.01 is a half-mile walk.
+    ///
+    /// Roxbury has 24 bus stops within a quarter-mile of the home stop and 92
+    /// within a half-mile, so the radius is not what hides stops — the page
+    /// limit is. Fetch the lot and cut the list down afterwards, by the same
+    /// distance that gets displayed.
+    static let searchRadius = 0.01
 
     enum Failure: Error {
         case badResponse(Int)
@@ -181,10 +190,10 @@ nonisolated enum MBTA {
         let data = try await get("/stops", [
             "filter[latitude]": String(latitude),
             "filter[longitude]": String(longitude),
-            "filter[radius]": "0.01",          // degrees, roughly a kilometre
+            "filter[radius]": String(searchRadius),
             "filter[route_type]": "3",         // bus
             "sort": "distance",
-            "page[limit]": "12",
+            "page[limit]": "200",              // the server's own ceiling
         ])
 
         let page = try decoder.decode(Page<StopResource>.self, from: data)
@@ -206,37 +215,72 @@ nonisolated enum MBTA {
         async throws -> (stop: TransitStop, arrivals: [TransitArrival])?
     {
         let candidates = try await stops(near: latitude, longitude)
-        guard let closest = candidates.first else { return nil }
-
-        let metres = { (s: TransitStop) in
-            distance(latitude, longitude, s.latitude, s.longitude)
-        }
-        let nearest = metres(closest)
-        let tied = candidates.filter { metres($0) - nearest < tieMetres }.prefix(4)
+        let tied = tiedForNearest(candidates, to: latitude, longitude)
+        guard let closest = tied.first else { return nil }
 
         guard tied.count > 1 else {
             return (closest, try await arrivals(at: closest.id))
         }
 
-        var best: (stop: TransitStop, arrivals: [TransitArrival])?
+        var options: [(stop: TransitStop, arrivals: [TransitArrival])] = []
         for stop in tied {
-            let found = (try? await arrivals(at: stop.id)) ?? []
-            guard let soonest = found.first?.time else { continue }
-            if best == nil || soonest < (best?.arrivals.first?.time ?? .distantFuture) {
-                best = (stop, found)
-            }
+            options.append((stop, (try? await arrivals(at: stop.id)) ?? []))
         }
+
         // Everything tied is equally close, so with no predictions anywhere
         // the first one is as good an answer as any.
-        return best ?? (closest, [])
+        return soonest(among: options) ?? (closest, [])
+    }
+
+    /// The stops that count as equally near, nearest first.
+    ///
+    /// The minimum is taken over the whole list rather than trusting the
+    /// order it arrived in, so this does not depend on the server's distance
+    /// metric agreeing with ours.
+    static func tiedForNearest(_ candidates: [TransitStop],
+                               to latitude: Double, _ longitude: Double,
+                               limit: Int = 4) -> [TransitStop] {
+        let metres = { (s: TransitStop) in
+            distance(latitude, longitude, s.latitude, s.longitude)
+        }
+        guard let nearest = candidates.map(metres).min() else { return [] }
+
+        return candidates
+            .filter { metres($0) - nearest < tieMetres }
+            .sorted { metres($0) < metres($1) }
+            .prefix(limit)
+            .map { $0 }
+    }
+
+    /// Of equally near stops, the one with a bus coming soonest. Stops with
+    /// nothing predicted lose to any stop that has something.
+    static func soonest(among options: [(stop: TransitStop, arrivals: [TransitArrival])])
+        -> (stop: TransitStop, arrivals: [TransitArrival])?
+    {
+        var best: (stop: TransitStop, arrivals: [TransitArrival])?
+        var bestTime = Date.distantFuture
+
+        for option in options {
+            guard let time = option.arrivals.map(\.time).min() else { continue }
+            if time < bestTime {
+                bestTime = time
+                best = option
+            }
+        }
+        return best
     }
 
     /// Metres between two points, near enough at city scale.
+    ///
+    /// Longitude is narrowed by the latitude midway between the two points,
+    /// not by the first one's: scaling by either end would make the distance
+    /// from A to B differ from B to A.
     static func distance(_ lat1: Double, _ lon1: Double,
                          _ lat2: Double, _ lon2: Double) -> Double {
         let metresPerDegree = 111_320.0
+        let meanLatitude = (lat1 + lat2) / 2
         let dLat = (lat1 - lat2) * metresPerDegree
-        let dLon = (lon1 - lon2) * metresPerDegree * cos(lat1 * .pi / 180)
+        let dLon = (lon1 - lon2) * metresPerDegree * cos(meanLatitude * .pi / 180)
         return (dLat * dLat + dLon * dLon).squareRoot()
     }
 
