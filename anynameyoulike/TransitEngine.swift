@@ -118,6 +118,19 @@ final class Transit {
     private(set) var alerts: [TransitAlert] = []
     private(set) var fetchedAt: Date?
 
+    // MARK: The home card
+    //
+    // Pinned to the home stop and nothing else. It never asks where you are,
+    // so opening the app cannot raise a location prompt.
+
+    private(set) var homeArrivals: [TransitArrival] = []
+    private(set) var homeFetchedAt: Date?
+    private(set) var homeIsStale = false
+
+    /// The journey the card is actually for.
+    private static let homeRoutes = ["23", "28"]
+    private static let homeDestination = "Ruggles"
+
     private var pollTask: Task<Void, Never>?
 
     /// Often enough to see a bus move, rarely enough not to cook the battery.
@@ -147,6 +160,52 @@ final class Transit {
         fetchedAt = cached.fetchedAt
         usedFallback = cached.usedFallback
         isStale = cached.fetchedAt != nil
+
+        let home = Store.document.transitHome
+        homeArrivals = home.arrivals
+        homeFetchedAt = home.fetchedAt
+        homeIsStale = home.fetchedAt != nil
+    }
+
+    // MARK: The home card
+
+    /// The next 23 and the next 28 towards Ruggles, soonest first.
+    ///
+    /// With only one of them running, that one shows alone. With neither, it
+    /// falls back to whatever else is heading that way, because the journey
+    /// matters more than the route number.
+    var homeLines: [TransitArrival] {
+        let now = Date()
+        let thatWay = homeArrivals
+            .filter { $0.time > now }
+            .filter { $0.headsign.localizedCaseInsensitiveContains(Self.homeDestination) }
+            .sorted { $0.time < $1.time }
+
+        let preferred = Self.homeRoutes
+            .compactMap { route in thatWay.first { $0.route == route } }
+            .sorted { $0.time < $1.time }
+
+        return preferred.isEmpty ? Array(thatWay.prefix(2)) : preferred
+    }
+
+    /// Reads the home stop and nothing else. No location, ever.
+    func refreshHomeStop() async {
+        let stop = TransitStop.fallback
+
+        do {
+            homeArrivals = try await MBTA.arrivals(at: stop.queryIDs)
+            homeFetchedAt = Date()
+            homeIsStale = false
+
+            let snapshot = TransitSnapshot(
+                stop: stop, arrivals: homeArrivals, alerts: [],
+                fetchedAt: homeFetchedAt, usedFallback: false
+            )
+            Store.mutate { $0.transitHome = snapshot }
+        } catch {
+            // Keep the last known times and mark them as old.
+            homeIsStale = true
+        }
     }
 
     // MARK: Reading
@@ -186,13 +245,6 @@ final class Transit {
     func locate() async {
         selectedStop = nil
         await load(locating: true)
-    }
-
-    /// Used by the home card. Re-reads the stop already resolved, so the card
-    /// stays live without the app ever asking for location on its own.
-    func refreshKnownStop() async {
-        selectedStop = nil
-        await load(locating: false)
     }
 
     private func load(locating: Bool) async {

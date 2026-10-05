@@ -75,12 +75,10 @@ struct ContentView: View {
                     NavigationLink {
                         TransitDashboard()
                     } label: {
-                        DoorCard(
-                            icon: "bus.fill",
-                            title: "mbta",
-                            value: transit.next.map { "\($0.minutes())" } ?? "—",
-                            caption: transit.stop?.name.lowercased() ?? "nearest stop",
-                            tint: Palette.redHot.opacity(0.75)
+                        TransitDoorCard(
+                            lines: transitLines,
+                            emptyMessage: "no buses to ruggles right now",
+                            staleNote: transitStaleNote
                         )
                     }
                     .buttonStyle(.plain)
@@ -149,12 +147,35 @@ struct ContentView: View {
         return Palette.bone.opacity(0.3)
     }
 
+    private var transitLines: [TransitLine] {
+        transit.homeLines.map { arrival in
+            TransitLine(
+                id: arrival.id,
+                route: arrival.route,
+                destination: arrival.headsign,
+                minutes: "\(arrival.minutes()) min"
+            )
+        }
+    }
+
+    /// Only shown when the times are left over from an earlier fetch.
+    private var transitStaleNote: String? {
+        guard transit.homeIsStale, let at = transit.homeFetchedAt else { return nil }
+        return "as of \(Self.clock.string(from: at))"
+    }
+
+    private static let clock: DateFormatter = {
+        let f = DateFormatter()
+        f.dateFormat = "HH:mm"
+        return f
+    }()
+
     private func refresh() async {
         steps = await writer.todayTotal()
         rota = TrashRota.load()
-        // Only the stop already resolved: the home screen never asks where
-        // you are, so opening the app cannot trigger a location prompt.
-        await transit.refreshKnownStop()
+        // Pinned to the home stop, so the home screen never asks where you
+        // are and opening the app cannot trigger a location prompt.
+        await transit.refreshHomeStop()
     }
 }
 

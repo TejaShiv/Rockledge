@@ -44,11 +44,15 @@ nonisolated enum Store {
         var stepLedger: [WriteBatch] = []
         var transit = TransitSnapshot()
 
+        /// The home card's own arrivals. Separate from `transit`, which
+        /// follows whatever stop the dashboard last resolved.
+        var transitHome = TransitSnapshot()
+
         init() {}
 
         enum CodingKeys: String, CodingKey {
             case version, savedAt, groceryItems, useLog, trashRota, stepLedger
-            case transit
+            case transit, transitHome
         }
 
         init(from decoder: Decoder) throws {
@@ -65,6 +69,7 @@ nonisolated enum Store {
             trashRota = value(.trashRota, TrashRota())
             stepLedger = value(.stepLedger, [])
             transit = value(.transit, TransitSnapshot())
+            transitHome = value(.transitHome, TransitSnapshot())
         }
     }
 

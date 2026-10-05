@@ -102,6 +102,81 @@ struct GroceryDoorCard: View {
     }
 }
 
+// MARK: - MBTA door, the next bus each way home
+
+struct TransitLine: Identifiable {
+    let id: String
+    let route: String
+    let destination: String
+    let minutes: String
+}
+
+struct TransitDoorCard: View {
+    let lines: [TransitLine]
+    let emptyMessage: String
+    /// Set only when the times on show are older than the last attempt.
+    let staleNote: String?
+
+    var body: some View {
+        VStack(alignment: .leading, spacing: 0) {
+            DoorHeader(
+                icon: "bus.fill",
+                title: "mbta",
+                tint: Palette.redHot.opacity(0.75)
+            )
+
+            Spacer(minLength: 10)
+
+            if lines.isEmpty {
+                Text(emptyMessage)
+                    .font(.system(size: 13, weight: .bold))
+                    .foregroundStyle(Palette.bone.opacity(0.35))
+                    .fixedSize(horizontal: false, vertical: true)
+                Spacer(minLength: 0)
+            } else {
+                VStack(spacing: 9) {
+                    ForEach(lines) { line in
+                        HStack(spacing: 11) {
+                            Text(line.route)
+                                .font(.system(size: 12, weight: .black).monospacedDigit())
+                                .foregroundStyle(Palette.bone.opacity(0.9))
+                                .frame(minWidth: 26)
+                                .padding(.horizontal, 6)
+                                .padding(.vertical, 3)
+                                .background(Capsule().fill(Palette.red.opacity(0.8)))
+
+                            Text(line.destination)
+                                .font(.system(size: 15, weight: .bold))
+                                .lineLimit(1)
+                                .foregroundStyle(Palette.bone.opacity(0.85))
+
+                            Spacer(minLength: 8)
+
+                            Text(line.minutes)
+                                .font(.system(size: 13, weight: .black).monospacedDigit())
+                                .foregroundStyle(Palette.bone.opacity(0.85))
+                        }
+                    }
+                }
+            }
+
+            if let staleNote {
+                Text(staleNote)
+                    .font(.system(size: 9, weight: .black))
+                    .tracking(1.2)
+                    .foregroundStyle(Palette.redHot.opacity(0.6))
+                    .padding(.top, 8)
+            }
+        }
+        .padding(.horizontal, 20)
+        .padding(.vertical, 16)
+        .frame(maxWidth: .infinity, alignment: .leading)
+        .frame(height: 150)
+        .glassBackdrop(cornerRadius: 32, tint: Palette.bone.opacity(0.06))
+        .contentShape(RoundedRectangle(cornerRadius: 32, style: .continuous))
+    }
+}
+
 // MARK: - Shared top row
 
 private struct DoorHeader: View {
