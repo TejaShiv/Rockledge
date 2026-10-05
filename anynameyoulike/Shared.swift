@@ -7,4 +7,5 @@ enum Shared {
     static let heart = HeartMonitor()
     static let sleep = SleepMonitor()
     static let pantry = Pantry()
+    static let transit = Transit()
 }

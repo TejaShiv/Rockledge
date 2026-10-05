@@ -42,11 +42,13 @@ nonisolated enum Store {
         var useLog: [UseEntry] = []
         var trashRota = TrashRota()
         var stepLedger: [WriteBatch] = []
+        var transit = TransitSnapshot()
 
         init() {}
 
         enum CodingKeys: String, CodingKey {
             case version, savedAt, groceryItems, useLog, trashRota, stepLedger
+            case transit
         }
 
         init(from decoder: Decoder) throws {
@@ -62,6 +64,7 @@ nonisolated enum Store {
             useLog = value(.useLog, [])
             trashRota = value(.trashRota, TrashRota())
             stepLedger = value(.stepLedger, [])
+            transit = value(.transit, TransitSnapshot())
         }
     }
 

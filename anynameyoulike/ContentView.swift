@@ -19,6 +19,7 @@ struct ContentView: View {
     private let haptics = Shared.haptics
     private var motion: MotionTilt { Shared.motion }
     private var pantry: Pantry { Shared.pantry }
+    private var transit: Transit { Shared.transit }
 
     @State private var steps: Int?
     @State private var rota = TrashRota.load()
@@ -66,6 +67,20 @@ struct ContentView: View {
                         GroceryDoorCard(
                             lines: stockLines,
                             emptyMessage: "nothing tracked yet"
+                        )
+                    }
+                    .buttonStyle(.plain)
+                    .simultaneousGesture(TapGesture().onEnded { haptics.soft() })
+
+                    NavigationLink {
+                        TransitDashboard()
+                    } label: {
+                        DoorCard(
+                            icon: "bus.fill",
+                            title: "mbta",
+                            value: transit.next.map { "\($0.minutes())" } ?? "—",
+                            caption: transit.stop?.name.lowercased() ?? "nearest stop",
+                            tint: Palette.redHot.opacity(0.75)
                         )
                     }
                     .buttonStyle(.plain)
@@ -137,6 +152,9 @@ struct ContentView: View {
     private func refresh() async {
         steps = await writer.todayTotal()
         rota = TrashRota.load()
+        // Only the stop already resolved: the home screen never asks where
+        // you are, so opening the app cannot trigger a location prompt.
+        await transit.refreshKnownStop()
     }
 }
 

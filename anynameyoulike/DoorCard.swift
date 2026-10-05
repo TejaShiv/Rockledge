@@ -34,6 +34,9 @@ struct DoorCard: View {
         .frame(maxWidth: .infinity, alignment: .leading)
         .frame(height: 150)
         .glassBackdrop(cornerRadius: 32, tint: Palette.bone.opacity(0.06))
+        // Without this only the text inside is tappable: the glass itself
+        // is not hit-testable, so taps on the empty part of a card are lost.
+        .contentShape(RoundedRectangle(cornerRadius: 32, style: .continuous))
     }
 }
 
@@ -93,6 +96,9 @@ struct GroceryDoorCard: View {
         .frame(maxWidth: .infinity, alignment: .leading)
         .frame(height: 150)
         .glassBackdrop(cornerRadius: 32, tint: Palette.bone.opacity(0.06))
+        // Without this only the text inside is tappable: the glass itself
+        // is not hit-testable, so taps on the empty part of a card are lost.
+        .contentShape(RoundedRectangle(cornerRadius: 32, style: .continuous))
     }
 }
 
