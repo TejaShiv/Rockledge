@@ -1,11 +1,19 @@
+import MapKit
 import SwiftUI
 
 struct TransitDashboard: View {
     @Environment(\.dismiss) private var dismiss
+    @Environment(\.scenePhase) private var scenePhase
 
     private var transit: Transit { Shared.transit }
     private var motion: MotionTilt { Shared.motion }
     private let haptics = Shared.haptics
+
+    /// The list is the default: at a glance you want the names and how far,
+    /// which read straight off a list without panning or waiting for tiles.
+    /// The map is a tap away and is where the live buses are.
+    @State private var showMap = false
+    @State private var camera: MapCameraPosition = .automatic
 
     var body: some View {
         ZStack {
@@ -19,7 +27,7 @@ struct TransitDashboard: View {
             BladeBackdrop(roll: motion.roll, pitch: motion.pitch)
 
             VStack(spacing: 0) {
-                ScreenHeader(title: "mbta", trailing: AnyView(refreshButton)) {
+                ScreenHeader(title: "mbta", trailing: AnyView(headerButtons)) {
                     dismiss()
                 }
 
@@ -27,6 +35,7 @@ struct TransitDashboard: View {
                     VStack(spacing: 12) {
                         nextPanel
                         if !transit.alerts.isEmpty { alertsPanel }
+                        pickerPanel
                         arrivalsPanel
                         directionsPanel
                     }
@@ -45,24 +54,250 @@ struct TransitDashboard: View {
         .navigationBarBackButtonHidden(true)
         .task {
             // The only place the app asks where you are, and only once the
-            // screen is actually open.
+            // screen is actually open. Always starts from the nearest stop.
             await transit.locate()
+            recenter()
+            transit.startPolling()
+        }
+        .onDisappear {
+            // Nothing polls behind the user's back.
+            transit.stopPolling()
+        }
+        .onChange(of: scenePhase) { _, phase in
+            if phase == .active { transit.startPolling() } else { transit.stopPolling() }
+        }
+        .onChange(of: transit.stop?.id) { _, _ in recenter() }
+    }
+
+    private var headerButtons: some View {
+        HStack(spacing: 8) {
+            Button {
+                haptics.soft()
+                Task { await transit.selectHomeStop() }
+            } label: {
+                Image(systemName: transit.isOnHomeStop ? "star.fill" : "star")
+                    .font(.footnote.weight(.black))
+                    .frame(width: 34, height: 34)
+                    .foregroundStyle(
+                        transit.isOnHomeStop
+                        ? Palette.redHot.opacity(0.9)
+                        : Palette.bone.opacity(0.6)
+                    )
+                    .background(Circle().fill(Palette.steel))
+            }
+            .buttonStyle(.plain)
+
+            Button {
+                haptics.soft()
+                Task { await transit.locate() }
+            } label: {
+                Image(systemName: "arrow.clockwise")
+                    .font(.footnote.weight(.black))
+                    .frame(width: 34, height: 34)
+                    .foregroundStyle(Palette.bone.opacity(transit.isLoading ? 0.25 : 0.6))
+                    .background(Circle().fill(Palette.steel))
+            }
+            .buttonStyle(.plain)
+            .disabled(transit.isLoading)
         }
     }
 
-    private var refreshButton: some View {
-        Button {
-            haptics.soft()
-            Task { await transit.locate() }
-        } label: {
-            Image(systemName: "arrow.clockwise")
-                .font(.footnote.weight(.black))
-                .frame(width: 34, height: 34)
-                .foregroundStyle(Palette.bone.opacity(transit.isLoading ? 0.25 : 0.6))
-                .background(Circle().fill(Palette.steel))
+    private func recenter() {
+        guard let stop = transit.stop else { return }
+        camera = .region(
+            MKCoordinateRegion(
+                center: CLLocationCoordinate2D(
+                    latitude: stop.latitude, longitude: stop.longitude
+                ),
+                latitudinalMeters: 900,
+                longitudinalMeters: 900
+            )
+        )
+    }
+
+    // MARK: Picking a stop
+
+    private var pickerPanel: some View {
+        VStack(alignment: .leading, spacing: 12) {
+            HStack {
+                Text(transit.usedFallback ? "stops near the home stop" : "stops near you")
+                    .font(.system(size: 9, weight: .black))
+                    .tracking(1.6)
+                    .foregroundStyle(Palette.bone.opacity(0.3))
+
+                Spacer()
+
+                modeToggle
+            }
+
+            if showMap {
+                stopMap
+            } else {
+                stopList
+            }
         }
-        .buttonStyle(.plain)
-        .disabled(transit.isLoading)
+        .padding(20)
+        .frame(maxWidth: .infinity, alignment: .leading)
+        .glassBackdrop(cornerRadius: 28, tint: Palette.bone.opacity(0.06))
+    }
+
+    private var modeToggle: some View {
+        HStack(spacing: 0) {
+            ForEach([false, true], id: \.self) { wantsMap in
+                Button {
+                    haptics.soft()
+                    showMap = wantsMap
+                    if wantsMap { recenter() }
+                } label: {
+                    Text(wantsMap ? "map" : "list")
+                        .font(.system(size: 9, weight: .black))
+                        .tracking(1.2)
+                        .foregroundStyle(
+                            showMap == wantsMap
+                            ? Palette.bone.opacity(0.9)
+                            : Palette.bone.opacity(0.3)
+                        )
+                        .padding(.horizontal, 11)
+                        .padding(.vertical, 5)
+                        .background {
+                            if showMap == wantsMap {
+                                Capsule().fill(Palette.red.opacity(0.75))
+                            }
+                        }
+                }
+                .buttonStyle(.plain)
+            }
+        }
+        .padding(2)
+        .background(Capsule().fill(Palette.steel))
+    }
+
+    private var stopList: some View {
+        VStack(spacing: 0) {
+            if transit.nearbyStops.isEmpty {
+                Text("no stops found nearby")
+                    .font(.system(size: 13, weight: .bold))
+                    .foregroundStyle(Palette.bone.opacity(0.4))
+                    .padding(.vertical, 6)
+            }
+
+            ForEach(transit.nearbyStops) { stop in
+                Button {
+                    haptics.soft()
+                    Task { await transit.select(stop) }
+                } label: {
+                    HStack(spacing: 10) {
+                        Image(systemName: stop.id == transit.stop?.id
+                              ? "largecircle.fill.circle" : "circle")
+                            .font(.system(size: 14, weight: .bold))
+                            .foregroundStyle(
+                                stop.id == transit.stop?.id
+                                ? Palette.redHot.opacity(0.9)
+                                : Palette.bone.opacity(0.25)
+                            )
+
+                        Text(stop.name)
+                            .font(.system(size: 14, weight: .bold))
+                            .lineLimit(1)
+                            .multilineTextAlignment(.leading)
+                            .foregroundStyle(Palette.bone.opacity(0.85))
+
+                        Spacer(minLength: 8)
+
+                        if let away = metres(to: stop) {
+                            Text(away)
+                                .font(.system(size: 11, weight: .black).monospacedDigit())
+                                .foregroundStyle(Palette.bone.opacity(0.35))
+                        }
+                    }
+                    .padding(.vertical, 7)
+                    .contentShape(Rectangle())
+                }
+                .buttonStyle(.plain)
+            }
+        }
+    }
+
+    /// Measured from the same point the list is sorted from, so the numbers
+    /// agree with the order they are shown in.
+    private func metres(to stop: TransitStop) -> String? {
+        guard let from = transit.origin else { return nil }
+        let away = MBTA.distance(from.latitude, from.longitude, stop.latitude, stop.longitude)
+        guard away >= 1 else { return nil }
+        return away < 1000 ? "\(Int(away))m" : String(format: "%.1fkm", away / 1000)
+    }
+
+    private var stopMap: some View {
+        Map(position: $camera) {
+            UserAnnotation()
+
+            ForEach(transit.nearbyStops) { stop in
+                Annotation("", coordinate: CLLocationCoordinate2D(
+                    latitude: stop.latitude, longitude: stop.longitude
+                )) {
+                    Button {
+                        haptics.soft()
+                        Task { await transit.select(stop) }
+                    } label: {
+                        stopPin(selected: stop.id == transit.stop?.id)
+                    }
+                    .buttonStyle(.plain)
+                }
+            }
+
+            ForEach(transit.vehicles) { bus in
+                Annotation("", coordinate: CLLocationCoordinate2D(
+                    latitude: bus.latitude, longitude: bus.longitude
+                )) {
+                    busPin(bus)
+                }
+            }
+        }
+        .mapStyle(.standard(pointsOfInterest: .excluding(.publicTransport)))
+        .frame(height: 300)
+        .clipShape(RoundedRectangle(cornerRadius: 20, style: .continuous))
+        .overlay(alignment: .bottomLeading) {
+            if !transit.vehicles.isEmpty {
+                Text("\(transit.vehicles.count) buses · every 12s")
+                    .font(.system(size: 9, weight: .black))
+                    .tracking(1)
+                    .foregroundStyle(Palette.bone.opacity(0.75))
+                    .padding(.horizontal, 8)
+                    .padding(.vertical, 4)
+                    .background(Capsule().fill(Palette.ink.opacity(0.75)))
+                    .padding(10)
+            }
+        }
+    }
+
+    private func stopPin(selected: Bool) -> some View {
+        Image(systemName: selected ? "largecircle.fill.circle" : "circle.fill")
+            .font(.system(size: selected ? 20 : 11, weight: .black))
+            .foregroundStyle(selected ? Palette.redHot : Palette.bone.opacity(0.75))
+            .shadow(color: .black.opacity(0.6), radius: 2)
+    }
+
+    /// Route number, and how many stops short of you it is when the bus can
+    /// be tied to one of the arrivals listed below.
+    private func busPin(_ bus: TransitVehicle) -> some View {
+        VStack(spacing: 1) {
+            Text(bus.route)
+                .font(.system(size: 10, weight: .black))
+                .foregroundStyle(Palette.bone)
+
+            if let away = bus.stopsAwayLabel {
+                Text(away)
+                    .font(.system(size: 7, weight: .black))
+                    .foregroundStyle(Palette.bone.opacity(0.75))
+            }
+        }
+        .padding(.horizontal, 6)
+        .padding(.vertical, 3)
+        .background(
+            Capsule()
+                .fill(Palette.red)
+                .shadow(color: .black.opacity(0.7), radius: 3)
+        )
     }
 
     // MARK: Next

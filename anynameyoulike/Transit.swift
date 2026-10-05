@@ -18,6 +18,13 @@ nonisolated struct TransitStop: Codable, Equatable, Identifiable {
     )
 }
 
+/// The point the stop list is measured and sorted from: where you are, or
+/// the home stop when location is off.
+nonisolated struct TransitPoint: Equatable {
+    var latitude: Double
+    var longitude: Double
+}
+
 nonisolated struct TransitArrival: Codable, Equatable, Identifiable {
     var id: String
     var route: String           // "66"
@@ -26,9 +33,41 @@ nonisolated struct TransitArrival: Codable, Equatable, Identifiable {
     var directionID: Int
     var time: Date
 
+    /// Kept so a live vehicle can be matched to the arrival it will become,
+    /// and so its distance in stops can be worked out.
+    var tripID: String?
+    var stopSequence: Int?
+
     /// Whole minutes away, floored, never negative.
     func minutes(from now: Date = Date()) -> Int {
         max(0, Int(time.timeIntervalSince(now) / 60))
+    }
+}
+
+/// A bus out on the road right now. Not cached: a position is worthless the
+/// moment it is stale, so it is either live or absent.
+nonisolated struct TransitVehicle: Equatable, Identifiable {
+    var id: String
+    var route: String
+    var latitude: Double
+    var longitude: Double
+    var label: String           // the number on the side of the bus
+    var status: String          // STOPPED_AT, IN_TRANSIT_TO, INCOMING_AT
+    var tripID: String?
+
+    /// How many stops short of you it is, worked out by comparing where the
+    /// bus is on its trip with where you are on it. Nil when the two cannot
+    /// be matched up, which is most buses on a route you are not waiting for.
+    var stopsAway: Int?
+
+    var stopsAwayLabel: String? {
+        guard let stopsAway else { return nil }
+        switch stopsAway {
+        case ..<0: return nil
+        case 0: return "here"
+        case 1: return "1 stop"
+        default: return "\(stopsAway) stops"
+        }
     }
 }
 
@@ -253,7 +292,9 @@ nonisolated enum MBTA {
                 headsign: headsign,
                 direction: endOfLine ?? headsign,
                 directionID: direction,
-                time: when
+                time: when,
+                tripID: tripID,
+                stopSequence: prediction.attributes.stopSequence
             )
         }
         .sorted { $0.time < $1.time }
@@ -288,6 +329,60 @@ nonisolated enum MBTA {
                 route: route ?? names.joined(separator: ", "),
                 effect: alert.attributes.effect ?? "ALERT",
                 header: text
+            )
+        }
+    }
+
+    // MARK: Vehicles
+
+    /// Buses currently running the given routes.
+    ///
+    /// `arrivals` is passed in so each bus can be tied to the arrival it is
+    /// going to become, which is the only way to say how many stops out it is.
+    static func vehicles(routes: [String],
+                         matching arrivals: [TransitArrival]) async throws -> [TransitVehicle] {
+        let names = Set(routes).sorted()
+        guard !names.isEmpty else { return [] }
+
+        let data = try await get("/vehicles", [
+            "filter[route]": names.joined(separator: ","),
+            "page[limit]": "60",
+        ])
+
+        let page = try decoder.decode(Page<VehicleResource>.self, from: data)
+
+        // Where each trip is due to reach the stop being watched.
+        var sequenceByTrip: [String: Int] = [:]
+        for arrival in arrivals {
+            if let trip = arrival.tripID, let sequence = arrival.stopSequence {
+                sequenceByTrip[trip] = sequence
+            }
+        }
+
+        return page.data.compactMap { vehicle -> TransitVehicle? in
+            guard let lat = vehicle.attributes.latitude,
+                  let lon = vehicle.attributes.longitude,
+                  let routeID = vehicle.relationships?.route?.data?.id
+            else { return nil }
+
+            let tripID: String? = vehicle.relationships?.trip?.data?.id
+
+            var stopsAway: Int?
+            if let tripID,
+               let mine = sequenceByTrip[tripID],
+               let theirs = vehicle.attributes.currentStopSequence {
+                stopsAway = mine - theirs
+            }
+
+            return TransitVehicle(
+                id: vehicle.id,
+                route: routeID,
+                latitude: lat,
+                longitude: lon,
+                label: vehicle.attributes.label ?? vehicle.id,
+                status: vehicle.attributes.currentStatus ?? "",
+                tripID: tripID,
+                stopsAway: stopsAway
             )
         }
     }
@@ -333,6 +428,7 @@ nonisolated enum MBTA {
             let arrivalTime: Date?
             let departureTime: Date?
             let directionId: Int?
+            let stopSequence: Int?
         }
 
         struct Relationships: Decodable {
@@ -343,6 +439,20 @@ nonisolated enum MBTA {
         struct Reference: Decodable {
             let data: Item?
             struct Item: Decodable { let id: String }
+        }
+    }
+
+    private struct VehicleResource: Decodable {
+        let id: String
+        let attributes: Attributes
+        let relationships: PredictionResource.Relationships?
+
+        struct Attributes: Decodable {
+            let latitude: Double?
+            let longitude: Double?
+            let label: String?
+            let currentStatus: String?
+            let currentStopSequence: Int?
         }
     }
 
