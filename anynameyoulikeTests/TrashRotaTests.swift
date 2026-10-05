@@ -94,7 +94,7 @@ struct TrashRotaTests {
     @Test func standingInIsWorthHalfATurn() {
         var r = rota(["A", "B"])
         // A is due this week; B actually did Monday.
-        r.swaps = [TrashSwap(date: collection(weeksAgo: 0), didIt: "B", dueWas: "A")]
+        r.records = [TrashRecord(date: collection(weeksAgo: 0), didIt: "B")]
 
         #expect(r.balance(for: "B") == 0.5)
         #expect(r.balance(for: "A") == -0.5)
@@ -107,11 +107,12 @@ struct TrashRotaTests {
 
     @Test func twoStandInsSkipTheTurn() {
         var r = rota(["A", "B", "C"])
-        // B covered both of A's collections two weeks ago, so B is a whole
-        // turn up and A a whole turn down. A holds week 0 in plain rotation.
-        r.swaps = [
-            TrashSwap(date: collection(weeksAgo: 2), didIt: "B", dueWas: "A"),
-            TrashSwap(date: collection(weeksAgo: 2, thursday: true), didIt: "B", dueWas: "A"),
+        // B covered both of A's collections this week, so B is a whole turn up
+        // and A a whole turn down. A holds week 0 in plain rotation, and B's
+        // own next turn is week 1, which is where this has to settle.
+        r.records = [
+            TrashRecord(date: collection(weeksAgo: 0), didIt: "B"),
+            TrashRecord(date: collection(weeksAgo: 0, thursday: true), didIt: "B"),
         ]
 
         #expect(r.balance(for: "B") == 1.0)
@@ -129,9 +130,9 @@ struct TrashRotaTests {
 
     @Test func onlyOnePersonIsScheduledInASkippedWeek() {
         var r = rota(["A", "B", "C"])
-        r.swaps = [
-            TrashSwap(date: collection(weeksAgo: 2), didIt: "B", dueWas: "A"),
-            TrashSwap(date: collection(weeksAgo: 2, thursday: true), didIt: "B", dueWas: "A"),
+        r.records = [
+            TrashRecord(date: collection(weeksAgo: 0), didIt: "B"),
+            TrashRecord(date: collection(weeksAgo: 0, thursday: true), didIt: "B"),
         ]
 
         let ledger = r.ledger(covering: 0...3)
@@ -144,12 +145,12 @@ struct TrashRotaTests {
     @Test func creditOnlySettlesAtTheNextTurn() {
         var r = rota(["A", "B", "C"])
         // B covers both of A's collections during A's own current week.
-        r.swaps = [
-            TrashSwap(date: collection(weeksAgo: 0), didIt: "B", dueWas: "A"),
-            TrashSwap(date: collection(weeksAgo: 0, thursday: true), didIt: "B", dueWas: "A"),
+        r.records = [
+            TrashRecord(date: collection(weeksAgo: 0), didIt: "B"),
+            TrashRecord(date: collection(weeksAgo: 0, thursday: true), didIt: "B"),
         ]
 
-        // This week was already assigned before the swaps landed.
+        // This week was already assigned before the records landed.
         #expect(r.thisWeek == "A")
         // B's turn is next week, and B is now a turn up, so A takes it.
         #expect(r.nextWeek == "A")
@@ -157,13 +158,17 @@ struct TrashRotaTests {
 
     @Test func aCorrectionRecordedAfterTheBoundaryStillSettles() {
         var r = rota(["A", "B", "C"])
-        // Recorded now, but dated to a collection two weeks back: the skip it
-        // causes must still show up in the upcoming schedule.
-        r.record("B", for: collection(weeksAgo: 2), due: "A")
-        r.record("B", for: collection(weeksAgo: 2, thursday: true), due: "A")
+        // Last week was C's. Recorded now, after that week turned, so the
+        // skip it causes still has to show up in the upcoming schedule.
+        #expect(r.lastWeek == "C")
+        r.record("B", for: collection(weeksAgo: 1), due: r.lastWeek)
+        r.record("B", for: collection(weeksAgo: 1, thursday: true), due: r.lastWeek)
 
         #expect(r.balance(for: "B") == 1.0)
-        #expect(r.person(weeksAhead: 1) == "A")
+        #expect(r.balance(for: "C") == -1.0)
+
+        // B's own turn is next week, so B is skipped and C takes it back.
+        #expect(r.person(weeksAhead: 1) == "C")
     }
 
     @Test func namingThePersonWhoWasDueClearsTheCorrection() {
@@ -171,22 +176,94 @@ struct TrashRotaTests {
         let day = collection(weeksAgo: 0)
 
         r.record("B", for: day, due: "A")
-        #expect(r.swaps.count == 1)
+        #expect(r.records.count == 1)
 
         r.record("A", for: day, due: "A")
-        #expect(r.swaps.isEmpty)
+        #expect(r.records.isEmpty)
         #expect(r.currentBalances.isEmpty)
     }
 
-    @Test func rephasingDoesNotRewriteWhoOwedWhat() {
+    @Test func rephasingReinterpretsRecordsAgainstTheNewPhase() {
         var r = rota(["A", "B", "C"])
         r.record("B", for: collection(weeksAgo: 0), due: "A")
 
         r.setPerson("C", weeksAhead: 0)
 
-        // The debt stays with A, who was due when it was recorded.
-        #expect(r.balance(for: "A") == -0.5)
+        // The week now belongs to C, so B stood in for C, not for A.
+        #expect(r.balance(for: "C") == -0.5)
         #expect(r.balance(for: "B") == 0.5)
+        #expect(r.balance(for: "A") == 0)
+    }
+
+    /// The shape of the reported bug: a record that agreed with the stated
+    /// history still produced a balance, because the phase had moved under it.
+    @Test func rephasingOntoTheRecordedPersonClearsTheBalance() {
+        var r = rota(["A", "B", "C"])
+        r.record("B", for: collection(weeksAgo: 0), due: "A")
+        #expect(r.balance(for: "B") == 0.5)
+
+        // Saying the week was B's all along makes the record agree with it.
+        r.setPerson("B", weeksAhead: 0)
+
+        #expect(r.currentBalances.isEmpty)
+    }
+
+    @Test func aRecordMatchingThePersonDueIsWorthNothing() {
+        var r = rota(["A", "B", "C"])
+        let day = collection(weeksAgo: 0)
+
+        // Stored directly, bypassing record(), to be sure the ledger itself
+        // ignores it rather than relying on it never being written.
+        r.records = [TrashRecord(date: day, didIt: r.thisWeek)]
+
+        #expect(r.currentBalances.isEmpty)
+        #expect(r.nextWeek == "B")
+    }
+
+    // MARK: The reported case
+
+    /// Dheeraj two weeks ago, Agilan last week, me this week, nobody standing
+    /// in for anybody. Everyone should be square and next week is Dheeraj's.
+    @Test func theRealHistorySettlesToNothing() {
+        var r = rota(["Dheeraj", "Agilan", "Me"])
+
+        // Set up through the pickers, as the sheet does.
+        r.setPerson("Me", weeksAhead: 0)
+        r.setPerson("Agilan", weeksAhead: -1)
+
+        #expect(r.lastWeek == "Agilan")
+        #expect(r.thisWeek == "Me")
+        #expect(r.person(weeksAhead: -2) == "Dheeraj")
+
+        // Last week's two collections, both done by whoever was due: Agilan.
+        r.record("Agilan", for: collection(weeksAgo: 1), due: r.lastWeek)
+        r.record("Agilan", for: collection(weeksAgo: 1, thursday: true), due: r.lastWeek)
+
+        #expect(r.currentBalances.isEmpty)
+        #expect(r.balance(for: "Dheeraj") == 0)
+        #expect(r.balance(for: "Agilan") == 0)
+        #expect(r.balance(for: "Me") == 0)
+        #expect(r.nextWeek == "Dheeraj")
+    }
+
+    /// The same history, but with the records already on file from before the
+    /// pickers were touched: re-phasing must bring them into line, not leave
+    /// them contradicting the rotation.
+    @Test func recordsStampedUnderAnOldPhaseStillSettleToNothing() {
+        var r = rota(["Dheeraj", "Agilan", "Me"])
+
+        // Agilan logged against last week while the phase still said Me.
+        r.setPerson("Me", weeksAhead: -1)
+        r.record("Agilan", for: collection(weeksAgo: 1), due: r.lastWeek)
+        r.record("Agilan", for: collection(weeksAgo: 1, thursday: true), due: r.lastWeek)
+        #expect(!r.currentBalances.isEmpty)   // wrong phase, so it looks owed
+
+        // Then the pickers are set to the real history.
+        r.setPerson("Me", weeksAhead: 0)
+        r.setPerson("Agilan", weeksAhead: -1)
+
+        #expect(r.currentBalances.isEmpty)
+        #expect(r.nextWeek == "Dheeraj")
     }
 
     // MARK: Recent collections
@@ -242,13 +319,13 @@ struct TrashRotaTests {
 
         #expect(r.people == ["A", "B"])
         #expect(r.anchorIndex == 1)
-        #expect(r.swaps.isEmpty)
+        #expect(r.records.isEmpty)
         #expect(r.balances.isEmpty)
     }
 
-    @Test func swapsAndBalancesSurviveARoundTrip() throws {
+    @Test func recordsAndBalancesSurviveARoundTrip() throws {
         var r = rota(["A", "B"])
-        r.swaps = [TrashSwap(date: collection(weeksAgo: 0), didIt: "B", dueWas: "A")]
+        r.records = [TrashRecord(date: collection(weeksAgo: 0), didIt: "B")]
         r.balances = r.currentBalances
 
         let encoder = JSONEncoder()
@@ -258,8 +335,8 @@ struct TrashRotaTests {
 
         let back = try decoder.decode(TrashRota.self, from: encoder.encode(r))
 
-        #expect(back.swaps.count == 1)
-        #expect(back.swaps[0].didIt == "B")
+        #expect(back.records.count == 1)
+        #expect(back.records[0].didIt == "B")
         #expect(back.balances["B"] == 0.5)
     }
 }

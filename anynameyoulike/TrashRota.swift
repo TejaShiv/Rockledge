@@ -3,15 +3,17 @@ import UserNotifications
 
 // MARK: - Model
 
-/// A collection somebody other than the scheduled person actually did.
+/// Who actually did a collection.
 ///
-/// `dueWas` is frozen when the record is made. Re-phasing the rota afterwards
-/// changes who is due from then on, but it must not rewrite who owed what.
-struct TrashSwap: Codable, Identifiable, Equatable {
+/// Only who did it is stored. Who was *due* is answered by the phase at the
+/// time of asking, so a record can never contradict the rotation: re-phasing
+/// re-reads every record against the new order rather than leaving stale
+/// stamps behind. A record naming the person who was due is no record at all
+/// and is dropped.
+struct TrashRecord: Codable, Identifiable, Equatable {
     var id = UUID()
     var date: Date          // start of the collection day
     var didIt: String
-    var dueWas: String
 }
 
 /// One Monday or Thursday collection, with who was due and who is on record
@@ -33,9 +35,9 @@ struct TrashRota: Codable {
 
     /// Collections that did not go to plan. The whole ledger is rebuilt from
     /// these, so correcting one after the fact settles up correctly.
-    var swaps: [TrashSwap] = []
+    var records: [TrashRecord] = []
 
-    /// Derived from `swaps`. Written out so the file reads honestly on its
+    /// Derived from `records`. Written out so the file reads honestly on its
     /// own, but recomputed on load rather than trusted.
     var balances: [String: Double] = [:]
 
@@ -72,9 +74,10 @@ struct TrashRota: Codable {
         Store.mutate { $0.trashRota = copy }
     }
 
-    /// Tolerant of a document written before swaps and balances existed.
+    /// Tolerant of a document written before records and balances existed,
+    /// and of the older `swaps` key whose frozen `dueWas` is now ignored.
     enum CodingKeys: String, CodingKey {
-        case people, me, anchorMonday, anchorIndex, swaps, balances
+        case people, me, anchorMonday, anchorIndex, records, swaps, balances
     }
 
     init() {}
@@ -90,8 +93,22 @@ struct TrashRota: Codable {
         me = value(.me, 0)
         anchorMonday = value(.anchorMonday, TrashRota.mondayOf(Date()))
         anchorIndex = value(.anchorIndex, 0)
-        swaps = value(.swaps, [])
         balances = value(.balances, [:])
+
+        let current: [TrashRecord] = value(.records, [])
+        records = current.isEmpty ? value(.swaps, []) : current
+    }
+
+    /// Spelled out because `swaps` is a read-only fallback with no property
+    /// behind it, which leaves nothing for the compiler to synthesise.
+    func encode(to encoder: Encoder) throws {
+        var c = encoder.container(keyedBy: CodingKeys.self)
+        try c.encode(people, forKey: .people)
+        try c.encode(me, forKey: .me)
+        try c.encode(anchorMonday, forKey: .anchorMonday)
+        try c.encode(anchorIndex, forKey: .anchorIndex)
+        try c.encode(records, forKey: .records)
+        try c.encode(balances, forKey: .balances)
     }
 
     // MARK: The plain rotation
@@ -127,20 +144,23 @@ struct TrashRota: Codable {
 
     /// Replays the weeks in order, settling up as it goes.
     ///
-    /// A swap moves half a turn from the person who was due to the person who
-    /// stepped in. When the rotation then reaches somebody a whole turn in
-    /// credit, it skips them and hands the week to whoever is furthest in
-    /// debt, cancelling one turn on each side.
+    /// Who was due for a week is decided here, during the replay, and a
+    /// record only moves anything when it names somebody else. A record that
+    /// agrees with the rotation is worth nothing, however the phase has been
+    /// set since. Standing in moves half a turn from the person who was due
+    /// to the person who did it. When the rotation then reaches somebody a
+    /// whole turn in credit, it skips them and hands the week to whoever is
+    /// furthest in debt, cancelling one turn on each side.
     func ledger(covering span: ClosedRange<Int>) -> Ledger {
         guard !people.isEmpty else { return Ledger() }
 
         let now = currentWeek
-        let earliest = swaps.map { weekIndex(of: $0.date) }.min()
+        let earliest = records.map { weekIndex(of: $0.date) }.min()
         let first = max(min(earliest ?? now, now + min(span.lowerBound, 0)), now - Self.historyCap)
         let last = now + max(span.upperBound, 0)
         guard first <= last else { return Ledger() }
 
-        let byWeek = Dictionary(grouping: swaps) { weekIndex(of: $0.date) }
+        let byWeek = Dictionary(grouping: records) { weekIndex(of: $0.date) }
         var ledger = Ledger()
 
         for week in first...last {
@@ -166,11 +186,13 @@ struct TrashRota: Codable {
 
             ledger.assignee[week] = who
 
-            // Swaps land after the week is assigned: they settle at the
-            // next turn boundary, not the one they happened in.
-            for swap in byWeek[week] ?? [] {
-                ledger.balances[swap.didIt, default: 0] += Self.half
-                ledger.balances[swap.dueWas, default: 0] -= Self.half
+            // Records land after the week is assigned: they settle at the
+            // next turn boundary, not the one they happened in. Whoever the
+            // week turned out to belong to is the person who was due, so a
+            // record naming them moves nothing.
+            for record in byWeek[week] ?? [] where record.didIt != who {
+                ledger.balances[record.didIt, default: 0] += Self.half
+                ledger.balances[who, default: 0] -= Self.half
             }
         }
 
@@ -255,16 +277,22 @@ struct TrashRota: Codable {
     // MARK: Corrections
 
     /// The most recent collections, newest first, each with who was due.
+    ///
+    /// One replay answers the whole list, so every row reads its due person
+    /// from the same settled schedule the card shows.
     func recentCollections(limit: Int = 4) -> [TrashCollection] {
         let cal = Self.gregorian
         let today = cal.startOfDay(for: Date())
+        let span = -(limit + 2)...0
+        let ledger = self.ledger(covering: span)
+
         var out: [TrashCollection] = []
         var week = currentWeek
 
-        while out.count < limit && week > currentWeek - limit - 2 {
+        while out.count < limit && week > currentWeek + span.lowerBound {
             let monday = self.monday(forWeek: week)
             let thursday = cal.date(byAdding: .day, value: 3, to: monday) ?? monday
-            let due = person(weeksAhead: week - currentWeek)
+            let due = ledger.assignee[week] ?? person(weeksAhead: week - currentWeek)
 
             for day in [thursday, monday] where day <= today && out.count < limit {
                 out.append(
@@ -278,19 +306,20 @@ struct TrashRota: Codable {
 
     func whoDid(on day: Date) -> String? {
         let cal = Self.gregorian
-        return swaps.first { cal.isDate($0.date, inSameDayAs: day) }?.didIt
+        return records.first { cal.isDate($0.date, inSameDayAs: day) }?.didIt
     }
 
     /// Records who actually did a collection. Naming the person who was due
-    /// clears the correction, so following the schedule needs no logging.
+    /// stores nothing, so following the schedule needs no logging and leaves
+    /// no record to be reinterpreted if the phase moves later.
     mutating func record(_ who: String, for day: Date, due: String) {
         let cal = Self.gregorian
         let date = cal.startOfDay(for: day)
 
-        swaps.removeAll { cal.isDate($0.date, inSameDayAs: date) }
+        records.removeAll { cal.isDate($0.date, inSameDayAs: date) }
         if who != due {
-            swaps.append(TrashSwap(date: date, didIt: who, dueWas: due))
-            swaps.sort { $0.date < $1.date }
+            records.append(TrashRecord(date: date, didIt: who))
+            records.sort { $0.date < $1.date }
         }
         save()
     }
