@@ -151,8 +151,6 @@ struct StepShortcuts: AppShortcutsProvider {
                 "Had \(\.$meal) in \(.applicationName)",
                 "Had my \(\.$meal) in \(.applicationName)",
                 "I had \(\.$meal) in \(.applicationName)",
-                // Bare, for when the meal name carries it: "water in Tally".
-                "\(\.$meal) in \(.applicationName)",
             ],
             shortTitle: "Log a meal",
             systemImageName: "fork.knife"
@@ -161,7 +159,10 @@ struct StepShortcuts: AppShortcutsProvider {
         AppShortcut(
             intent: LogItemIntent(),
             phrases: [
-                // Imperative first, as above.
+                // A plain imperative that is not already spoken for. "Take
+                // off" leads nowhere good: it belongs to alarms and flights
+                // before it belongs to groceries.
+                "Subtract \(\.$item) in \(.applicationName)",
                 "Take \(\.$item) off in \(.applicationName)",
                 // "Log" belongs to meals now: registering it here too made
                 // one phrase match two intents, and an item and a meal can
