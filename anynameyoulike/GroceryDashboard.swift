@@ -11,6 +11,7 @@ struct GroceryDashboard: View {
     @State private var creating = false
     @State private var showOrder = false
     @State private var weighing: GroceryItem?
+    @State private var typing: GroceryItem?
     @State private var remindersOn = NightlyReminder.isEnabled
     @State private var showReminder = false
 
@@ -40,7 +41,8 @@ struct GroceryDashboard: View {
                                 pantry: pantry,
                                 haptics: haptics,
                                 onEdit: { editing = item },
-                                onWeigh: { weighing = item }
+                                onWeigh: { weighing = item },
+                                onTypeAmount: { typing = item }
                             )
                         }
 
@@ -70,6 +72,9 @@ struct GroceryDashboard: View {
         }
         .sheet(item: $weighing) { item in
             WeighSheet(item: item, pantry: pantry, haptics: haptics)
+        }
+        .sheet(item: $typing) { item in
+            UsedSheet(item: item, pantry: pantry, haptics: haptics)
         }
     }
 
@@ -165,6 +170,7 @@ private struct ItemRow: View {
     let haptics: GrainHaptics
     let onEdit: () -> Void
     let onWeigh: () -> Void
+    let onTypeAmount: () -> Void
 
     private var days: Double { pantry.daysLeft(for: item) }
 
@@ -229,6 +235,36 @@ private struct ItemRow: View {
                             haptics.strike()
                             pantry.logUse(item, amount: 1)
                         }
+                        // The tap is still there for one or two; this is for
+                        // when it was eleven.
+                        key("keyboard") {
+                            haptics.soft()
+                            onTypeAmount()
+                        }
+                        key("slider.horizontal.3") {
+                            haptics.soft()
+                            onEdit()
+                        }
+                    }
+                } else if item.measure == .portion {
+                    HStack(spacing: 8) {
+                        Button {
+                            haptics.soft()
+                            onTypeAmount()
+                        } label: {
+                            Text("USED")
+                                .font(.system(size: 11, weight: .black))
+                                .tracking(1.4)
+                                .padding(.horizontal, 16)
+                                .frame(height: 38)
+                                .background(Capsule().fill(Palette.steel))
+                                .overlay(
+                                    Capsule().strokeBorder(Palette.red.opacity(0.4), lineWidth: 1)
+                                )
+                                .foregroundStyle(Palette.bone.opacity(0.8))
+                        }
+                        .buttonStyle(.plain)
+
                         key("slider.horizontal.3") {
                             haptics.soft()
                             onEdit()
@@ -421,10 +457,10 @@ private struct ItemEditor: View {
 
                         measurePicker
 
-                        field(measure == .count ? "unit name, for example eggs" : "weight unit",
+                        field(measure == .count ? "unit name, for example eggs" : "amount unit, for example g",
                               text: $unit, keyboard: .default)
 
-                        field(measure == .count ? "how many in a full pack" : "full weight when opened",
+                        field(measure == .count ? "how many in a full pack" : "how much in a full pack",
                               text: $packSize, keyboard: .decimalPad)
 
                         if measure == .weigh {
@@ -492,9 +528,11 @@ private struct ItemEditor: View {
             ForEach(GroceryMeasure.allCases) { option in
                 Button {
                     haptics.soft()
+                    let wasDefault = unit == measure.defaultUnit || unit.isEmpty
                     measure = option
-                    if option == .weigh && unit == "units" { unit = "g" }
-                    if option == .count && unit == "g" { unit = "units" }
+                    // Only move the unit if it was still whatever the old mode
+                    // suggested; a unit typed by hand is left alone.
+                    if wasDefault { unit = option.defaultUnit }
                 } label: {
                     HStack(spacing: 10) {
                         Image(systemName: measure == option
@@ -505,9 +543,14 @@ private struct ItemEditor: View {
                                 ? Palette.redHot.opacity(0.9)
                                 : Palette.bone.opacity(0.25)
                             )
-                        Text(option.label)
-                            .font(.system(size: 14, weight: .bold))
-                            .foregroundStyle(Palette.bone.opacity(0.8))
+                        VStack(alignment: .leading, spacing: 1) {
+                            Text(option.label)
+                                .font(.system(size: 14, weight: .bold))
+                                .foregroundStyle(Palette.bone.opacity(0.8))
+                            Text(option.hint)
+                                .font(.system(size: 10, weight: .medium))
+                                .foregroundStyle(Palette.bone.opacity(0.3))
+                        }
                         Spacer()
                     }
                     .padding(.vertical, 5)
@@ -525,7 +568,7 @@ private struct ItemEditor: View {
         VStack(alignment: .leading, spacing: 6) {
             Text(measure == .count
                  ? "how many are left right now"
-                 : "usable weight left right now")
+                 : "how much is left right now")
                 .font(.system(size: 9, weight: .black))
                 .tracking(1.4)
                 .foregroundStyle(Palette.redHot.opacity(0.65))
@@ -617,7 +660,7 @@ private struct ItemEditor: View {
 
     private func fullFromFields() -> Double {
         let pack = max(number(packSize), 0)
-        return measure == .count ? pack : max(0, pack - number(tare))
+        return measure == .weigh ? max(0, pack - number(tare)) : pack
     }
 
     private func commit() {
@@ -627,7 +670,7 @@ private struct ItemEditor: View {
         let pack = max(number(packSize), 0.001)
         let tareValue = measure == .weigh ? number(tare) : 0
         let perDay = max(number(rate), 0.001)
-        let full = measure == .count ? pack : max(0, pack - tareValue)
+        let full = measure == .weigh ? max(0, pack - tareValue) : pack
 
         // blank means "however much it was", or a full pack for a new item
         let stock: Double
@@ -773,5 +816,106 @@ private struct OrderRow: View {
         .padding(.horizontal, 18)
         .padding(.vertical, 15)
         .glassBackdrop(cornerRadius: 26, tint: Palette.bone.opacity(0.06))
+    }
+}
+
+
+/// Typing how much was taken, for a portion item or a big count.
+private struct UsedSheet: View {
+    let item: GroceryItem
+    let pantry: Pantry
+    let haptics: GrainHaptics
+    @Environment(\.dismiss) private var dismiss
+
+    @State private var text = ""
+    @State private var short: Double?
+    @FocusState private var focused: Bool
+
+    var body: some View {
+        ZStack {
+            Palette.ink.ignoresSafeArea()
+
+            VStack(spacing: 20) {
+                SheetHeader(title: item.name.lowercased(), showRefresh: false) {} onClose: {
+                    dismiss()
+                }
+
+                Spacer()
+
+                TextField("0", text: $text)
+                    .keyboardType(.decimalPad)
+                    .focused($focused)
+                    .multilineTextAlignment(.center)
+                    .font(.system(size: 62, weight: .heavy).width(.expanded).monospacedDigit())
+                    .foregroundStyle(Palette.bone)
+                    .tint(Palette.redHot)
+
+                Text("how much you just used, in \(item.unit)")
+                    .font(.system(size: 11, weight: .bold))
+                    .foregroundStyle(Palette.bone.opacity(0.35))
+
+                Text("\(trimmed(item.remaining)) \(item.unit) left")
+                    .font(.system(size: 9, weight: .black))
+                    .tracking(1.2)
+                    .foregroundStyle(Palette.bone.opacity(0.25))
+
+                if let short, short > 0 {
+                    Text("only \(trimmed(short)) \(item.unit) short of that — logged what was there")
+                        .font(.system(size: 10, weight: .bold))
+                        .multilineTextAlignment(.center)
+                        .foregroundStyle(Palette.redHot.opacity(0.8))
+                        .padding(.horizontal, 30)
+                }
+
+                Spacer()
+
+                Button {
+                    commit()
+                } label: {
+                    Text("LOG IT")
+                        .font(.system(size: 15, weight: .black))
+                        .tracking(2)
+                        .frame(maxWidth: .infinity)
+                        .frame(height: 56)
+                        .background(
+                            RoundedRectangle(cornerRadius: 24, style: .continuous)
+                                .fill(Palette.red)
+                        )
+                        .foregroundStyle(Palette.bone)
+                }
+                .buttonStyle(.plain)
+                .padding(.horizontal, 20)
+                .padding(.bottom, 20)
+            }
+        }
+        .preferredColorScheme(.dark)
+        .fontDesign(.rounded)
+        .onAppear { focused = true }
+    }
+
+    private func commit() {
+        guard let value = Double(text.replacingOccurrences(of: ",", with: ".")),
+              value > 0
+        else {
+            dismiss()
+            return
+        }
+
+        let result = pantry.take(item, amount: value)
+        haptics.commit()
+
+        // Say so rather than silently logging less than was asked for.
+        if result.short > 0 {
+            short = result.short
+            text = ""
+        } else {
+            dismiss()
+        }
+    }
+
+    private func trimmed(_ value: Double) -> String {
+        value == value.rounded()
+            ? String(Int(value))
+            : String(format: "%.1f", value)
     }
 }

@@ -4,13 +4,48 @@ import UserNotifications
 
 // MARK: - Model
 
+/// How an item's usage gets recorded.
+///
+/// The raw values are what is already written in kalla.json, so adding a mode
+/// leaves every existing item exactly where it was.
 nonisolated enum GroceryMeasure: String, Codable, CaseIterable, Identifiable {
-    case count, weigh
+    /// Eggs, slices: one tap per unit, or type a number when it was a lot.
+    case count
+    /// Chicken: take 250g out of the pack and type 250.
+    case portion
+    /// The pack goes on the scale and the reading is the new truth.
+    case weigh
 
     var id: String { rawValue }
 
+    /// Worded to be impossible to mix up: what you do, not what you have.
+    /// "Count what I use" and "type what I used" were two ways of saying the
+    /// same thing.
     var label: String {
-        self == .count ? "count what I use" : "weigh what's left"
+        switch self {
+        case .count: return "tap off each one"
+        case .portion: return "type the amount I take"
+        case .weigh: return "weigh what's left"
+        }
+    }
+
+    var hint: String {
+        switch self {
+        case .count: return "eggs, slices — one tap each, or type a number"
+        case .portion: return "250g of chicken out of the pack"
+        case .weigh: return "the whole pack on the scale"
+        }
+    }
+
+    /// Whether the number you give is how much you took, rather than how much
+    /// is left.
+    var recordsUsage: Bool { self != .weigh }
+
+    var defaultUnit: String {
+        switch self {
+        case .count: return "units"
+        case .portion, .weigh: return "g"
+        }
     }
 }
 
@@ -27,7 +62,8 @@ nonisolated struct GroceryItem: Identifiable, Codable {
     var lastOrdered: Date?
 
     var fullAmount: Double {
-        measure == .count ? packSize : max(0, packSize - tare)
+        // Only a weighed pack has a container to subtract.
+        measure == .weigh ? max(0, packSize - tare) : packSize
     }
 }
 
@@ -98,6 +134,21 @@ final class Pantry {
 
     func index(of item: GroceryItem) -> Int? {
         items.firstIndex { $0.id == item.id }
+    }
+
+    /// Takes what it can and says how much was missing, for callers that
+    /// have to explain themselves — Siri cannot show a half-filled bar.
+    @discardableResult
+    func take(_ item: GroceryItem, amount: Double) -> (taken: Double, short: Double) {
+        guard let i = index(of: item), amount > 0 else { return (0, 0) }
+
+        let taken = min(amount, max(0, items[i].remaining))
+        if taken > 0 {
+            items[i].remaining -= taken
+            log.append(UseEntry(itemID: item.id, date: Date(), amount: taken))
+            save()
+        }
+        return (taken, amount - taken)
     }
 
     func logUse(_ item: GroceryItem, amount: Double) {
