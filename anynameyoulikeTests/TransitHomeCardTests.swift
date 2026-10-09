@@ -25,19 +25,13 @@ struct TransitHomeCardTests {
         )
     }
 
-    /// Writes the home slice, builds an engine, reads back what it chose, and
-    /// puts the document back as it was.
+    /// Asks the selection logic directly.
+    ///
+    /// Deliberately not through Store: these tests run inside the app, which
+    /// fetches real arrivals into the same slice while they run, and a live
+    /// 23 towards Ruggles turned up in the middle of one.
     private func homeLines(given arrivals: [TransitArrival]) -> [TransitArrival] {
-        let before = Store.document.transitHome
-        defer { Store.mutate { $0.transitHome = before } }
-
-        Store.mutate {
-            $0.transitHome = TransitSnapshot(
-                stop: .fallback, arrivals: arrivals, alerts: [],
-                fetchedAt: Date(), usedFallback: false
-            )
-        }
-        return Transit().homeLines
+        Transit.homeLines(from: arrivals)
     }
 
     @Test func showsTheNext23AndThe28() {
@@ -124,7 +118,7 @@ struct TransitHomeCardTests {
 
         #expect(engine.homeIsStale)
         #expect(engine.homeFetchedAt == fetched)
-        #expect(engine.homeLines.map(\.route) == ["23"])
+        #expect(Transit.homeLines(from: engine.homeArrivals).map(\.route) == ["23"])
     }
 
     @Test func aFirstEverLaunchHasNothingToMarkStale() {

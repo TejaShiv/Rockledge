@@ -459,6 +459,28 @@ nonisolated enum MBTA {
         }
     }
 
+    /// The routes that actually call at a stop.
+    ///
+    /// Not the same as the routes with an arrival predicted: a route with
+    /// nothing due still runs buses past, and overnight there are no
+    /// predictions at all.
+    static func routes(serving stopIDs: [String]) async throws -> [String] {
+        guard !stopIDs.isEmpty else { return [] }
+
+        let data = try await get("/routes", [
+            "filter[stop]": stopIDs.joined(separator: ","),
+        ])
+
+        let page = try decoder.decode(Page<RouteResource>.self, from: data)
+        return page.data.map(\.id).sorted {
+            (Int($0) ?? .max, $0) < (Int($1) ?? .max, $1)
+        }
+    }
+
+    private struct RouteResource: Decodable {
+        let id: String
+    }
+
     // MARK: Vehicles
 
     /// Buses currently running the given routes.

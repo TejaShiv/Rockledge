@@ -12,6 +12,7 @@ import Foundation
 final class LocationFinder: NSObject, CLLocationManagerDelegate {
     private let manager = CLLocationManager()
     private var waiting: CheckedContinuation<CLLocationCoordinate2D?, Never>?
+    private var deciding: CheckedContinuation<Void, Never>?
 
     /// Long enough for a cold fix, short enough that the screen is not left
     /// hanging on it. Falling back is a perfectly good answer.
@@ -33,14 +34,21 @@ final class LocationFinder: NSObject, CLLocationManagerDelegate {
     func coordinate() async -> CLLocationCoordinate2D? {
         guard !isDenied else { return nil }
 
+        // The permission prompt waits for a person, so it gets no deadline.
+        // Timing it out means a moment's hesitation reads as a refusal and
+        // the screen says location is off when it is not.
+        if manager.authorizationStatus == .notDetermined {
+            await withCheckedContinuation { continuation in
+                deciding = continuation
+                manager.requestWhenInUseAuthorization()
+            }
+            guard !isDenied else { return nil }
+        }
+
+        // The fix itself does get a deadline: that is the part that can hang.
         return await withCheckedContinuation { continuation in
             waiting = continuation
-
-            if manager.authorizationStatus == .notDetermined {
-                manager.requestWhenInUseAuthorization()
-            } else {
-                manager.requestLocation()
-            }
+            manager.requestLocation()
 
             Task { [weak self, patience] in
                 try? await Task.sleep(for: patience)
@@ -55,19 +63,20 @@ final class LocationFinder: NSObject, CLLocationManagerDelegate {
         waiting.resume(returning: coordinate)
     }
 
+    private func settle() {
+        guard let deciding else { return }
+        self.deciding = nil
+        deciding.resume()
+    }
+
     // MARK: Delegate
 
     func locationManagerDidChangeAuthorization(_ manager: CLLocationManager) {
-        guard waiting != nil else { return }
+        // Still on screen, waiting for an answer.
+        guard manager.authorizationStatus != .notDetermined else { return }
 
-        switch manager.authorizationStatus {
-        case .notDetermined:
-            break                       // still on screen, waiting for an answer
-        case .denied, .restricted:
-            finish(nil)
-        default:
-            manager.requestLocation()
-        }
+        settle()
+        if isDenied { finish(nil) }
     }
 
     func locationManager(_ manager: CLLocationManager,
@@ -114,6 +123,10 @@ final class Transit {
     /// Live positions for the routes serving the selected stop. Never cached.
     private(set) var vehicles: [TransitVehicle] = []
 
+    /// The routes that call at the stop being shown. What the map draws, and
+    /// what the screen says it is drawing.
+    private(set) var servingRoutes: [String] = []
+
     private(set) var arrivals: [TransitArrival] = []
     private(set) var alerts: [TransitAlert] = []
     private(set) var fetchedAt: Date?
@@ -128,8 +141,8 @@ final class Transit {
     private(set) var homeIsStale = false
 
     /// The journey the card is actually for.
-    private static let homeRoutes = ["23", "28"]
-    private static let homeDestination = "Ruggles"
+    static let homeRoutes = ["23", "28"]
+    static let homeDestination = "Ruggles"
 
     private var pollTask: Task<Void, Never>?
 
@@ -190,13 +203,20 @@ final class Transit {
     /// falls back to whatever else is heading that way, because the journey
     /// matters more than the route number.
     var homeLines: [TransitArrival] {
-        let now = Date()
-        let thatWay = homeArrivals
+        Self.homeLines(from: homeArrivals)
+    }
+
+    /// Pure, so it can be exercised without the document underneath it: the
+    /// tests run inside the app, which fetches real arrivals into the same
+    /// slice while they run.
+    static func homeLines(from arrivals: [TransitArrival],
+                          now: Date = Date()) -> [TransitArrival] {
+        let thatWay = arrivals
             .filter { $0.time > now }
-            .filter { $0.headsign.localizedCaseInsensitiveContains(Self.homeDestination) }
+            .filter { $0.headsign.localizedCaseInsensitiveContains(homeDestination) }
             .sorted { $0.time < $1.time }
 
-        let preferred = Self.homeRoutes
+        let preferred = homeRoutes
             .compactMap { route in thatWay.first { $0.route == route } }
             .sorted { $0.time < $1.time }
 
@@ -338,12 +358,14 @@ final class Transit {
 
         selectedStop = stop
         vehicles = []
+        servingRoutes = []
 
         do {
             let found = try await MBTA.arrivals(at: stop.queryIDs)
             arrivals = found
             fetchedAt = Date()
             isStale = false
+            await loadRoutes(for: stop)
             await loadAlerts(for: found)
             await loadVehicles()
         } catch {
@@ -367,9 +389,14 @@ final class Transit {
         // what the home card shows next launch.
         persist()
         Task {
+            await loadRoutes(for: stop)
             await loadAlerts(for: arrivals)
             await loadVehicles()
         }
+    }
+
+    private func loadRoutes(for stop: TransitStop) async {
+        servingRoutes = (try? await MBTA.routes(serving: stop.queryIDs)) ?? []
     }
 
     // MARK: Live buses
@@ -394,13 +421,15 @@ final class Transit {
     }
 
     private func loadVehicles() async {
-        let routes = Array(Set(upcoming.map(\.route)))
-        guard !routes.isEmpty else {
+        // Every route that calls here, not just the ones with something due.
+        // A route can be running buses past with no prediction at the stop,
+        // and overnight there are no predictions at all.
+        guard !servingRoutes.isEmpty else {
             vehicles = []
             return
         }
 
-        if let found = try? await MBTA.vehicles(routes: routes, matching: arrivals) {
+        if let found = try? await MBTA.vehicles(routes: servingRoutes, matching: arrivals) {
             // A jump every twelve seconds is honest about what is known; an
             // interpolated glide would be inventing positions.
             vehicles = found

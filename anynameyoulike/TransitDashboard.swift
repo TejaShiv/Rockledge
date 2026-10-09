@@ -55,6 +55,9 @@ struct TransitDashboard: View {
         .task {
             // The only place the app asks where you are, and only once the
             // screen is actually open. Always starts from the nearest stop.
+            // Something on screen before the network answers, rather than a
+            // world map.
+            recenter()
             await transit.locate()
             recenter()
             transit.startPolling()
@@ -66,14 +69,17 @@ struct TransitDashboard: View {
         .onChange(of: scenePhase) { _, phase in
             if phase == .active { transit.startPolling() } else { transit.stopPolling() }
         }
-        .onChange(of: transit.stop?.id) { _, _ in recenter() }
+
     }
 
     private var headerButtons: some View {
         HStack(spacing: 8) {
             Button {
                 haptics.soft()
-                Task { await transit.selectHomeStop() }
+                Task {
+                    await transit.selectHomeStop()
+                    recenter()
+                }
             } label: {
                 Image(systemName: transit.isOnHomeStop ? "star.fill" : "star")
                     .font(.footnote.weight(.black))
@@ -135,6 +141,14 @@ struct TransitDashboard: View {
             } else {
                 stopList
             }
+
+            if !transit.servingRoutes.isEmpty {
+                // Naming the routes means a bus that is not on the map reads
+                // as one that does not stop here, rather than as a bug.
+                Text("buses shown: \(transit.servingRoutes.joined(separator: " · ")) — the routes that stop here")
+                    .font(.system(size: 10, weight: .medium))
+                    .foregroundStyle(Palette.bone.opacity(0.3))
+            }
         }
         .padding(20)
         .frame(maxWidth: .infinity, alignment: .leading)
@@ -172,7 +186,20 @@ struct TransitDashboard: View {
         .background(Capsule().fill(Palette.steel))
     }
 
+    /// A row is about 34pt, so this is four and a half of them: enough to
+    /// choose from without the list taking over the screen, and the half row
+    /// showing says there is more below.
+    private static let stopListHeight: CGFloat = 155
+
     private var stopList: some View {
+        ScrollView {
+            stopRows
+        }
+        .frame(height: Self.stopListHeight)
+        .scrollIndicators(.visible)
+    }
+
+    private var stopRows: some View {
         VStack(spacing: 0) {
             if transit.nearbyStops.isEmpty {
                 Text("no stops found nearby")
@@ -184,7 +211,10 @@ struct TransitDashboard: View {
             ForEach(transit.nearbyStops) { stop in
                 Button {
                     haptics.soft()
-                    Task { await transit.select(stop) }
+                    Task {
+                        await transit.select(stop)
+                        recenter()
+                    }
                 } label: {
                     HStack(spacing: 10) {
                         Image(systemName: stop.id == transit.stop?.id
@@ -246,7 +276,10 @@ struct TransitDashboard: View {
                 )) {
                     Button {
                         haptics.soft()
-                        Task { await transit.select(stop) }
+                        Task {
+                            await transit.select(stop)
+                            recenter()
+                        }
                     } label: {
                         stopPin(selected: stop.id == transit.stop?.id)
                     }
@@ -263,17 +296,24 @@ struct TransitDashboard: View {
             }
         }
         .mapStyle(.standard(pointsOfInterest: .excluding(.publicTransport)))
+        .mapControls {
+            MapUserLocationButton()
+            MapCompass()
+        }
         .frame(height: 300)
         .clipShape(RoundedRectangle(cornerRadius: 20, style: .continuous))
         .overlay(alignment: .bottomLeading) {
-            if !transit.vehicles.isEmpty {
-                Text("\(transit.vehicles.count) buses · every 12s")
+            if !transit.servingRoutes.isEmpty {
+                // Just the cadence: the routes are named under the map, and
+                // spelling them out again here spanned the whole width and
+                // sat on top of the bus pins.
+                Text("every 12s")
                     .font(.system(size: 9, weight: .black))
                     .tracking(1)
                     .foregroundStyle(Palette.bone.opacity(0.75))
                     .padding(.horizontal, 8)
                     .padding(.vertical, 4)
-                    .background(Capsule().fill(Palette.ink.opacity(0.75)))
+                    .background(Capsule().fill(Palette.ink.opacity(0.8)))
                     .padding(10)
             }
         }
