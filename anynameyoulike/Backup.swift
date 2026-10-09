@@ -148,6 +148,72 @@ nonisolated enum Backup {
         return fixed
     }
 
+    // MARK: Rolling local snapshots
+
+    /// One dated copy a day, inside Documents.
+    ///
+    /// These are a safety net for a bad import or a half-written file. They
+    /// are NOT protection against re-signing: the snapshots sit in the same
+    /// container as kalla.json and go with it. Only an exported copy that
+    /// left the phone survives that.
+    enum Snapshots {
+        static let folderName = "snapshots"
+        static let keep = 7
+
+        static var folder: URL {
+            Store.folder.appendingPathComponent(folderName, isDirectory: true)
+        }
+
+        /// Newest first.
+        static func all() -> [URL] {
+            let found = (try? FileManager.default.contentsOfDirectory(
+                at: folder, includingPropertiesForKeys: [.contentModificationDateKey]
+            )) ?? []
+
+            return found
+                .filter { $0.pathExtension == "json" }
+                .sorted { takenAt($0) > takenAt($1) }
+        }
+
+        static func takenAt(_ url: URL) -> Date {
+            (try? url.resourceValues(forKeys: [.contentModificationDateKey])
+                .contentModificationDate) ?? .distantPast
+        }
+
+        /// Writes one if the newest is more than a day old, then drops the
+        /// oldest beyond the limit. Called on launch; cheap when it is a no-op.
+        @discardableResult
+        static func writeIfDue(now: Date = Date()) -> URL? {
+            let existing = all()
+
+            if let newest = existing.first,
+               now.timeIntervalSince(takenAt(newest)) < 24 * 60 * 60 {
+                return nil
+            }
+
+            try? FileManager.default.createDirectory(
+                at: folder, withIntermediateDirectories: true
+            )
+
+            let stamp = DateFormatter()
+            stamp.dateFormat = "yyyy-MM-dd-HHmm"
+            let url = folder.appendingPathComponent("kalla-\(stamp.string(from: now)).json")
+
+            guard let data = try? Data(contentsOf: Store.url),
+                  (try? data.write(to: url, options: .atomic)) != nil
+            else { return nil }
+
+            prune()
+            return url
+        }
+
+        static func prune() {
+            for old in all().dropFirst(keep) {
+                try? FileManager.default.removeItem(at: old)
+            }
+        }
+    }
+
     /// Overwrites everything. Only call once the user has said yes.
     static func restore(_ document: Store.Document) {
         Store.replace(with: document)

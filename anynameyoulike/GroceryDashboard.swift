@@ -11,7 +11,8 @@ struct GroceryDashboard: View {
     @State private var creating = false
     @State private var showOrder = false
     @State private var weighing: GroceryItem?
-    @State private var remindersOn = GroceryReminder.isEnabled
+    @State private var remindersOn = NightlyReminder.isEnabled
+    @State private var showReminder = false
 
     var body: some View {
         ZStack {
@@ -64,17 +65,20 @@ struct GroceryDashboard: View {
         .sheet(isPresented: $showOrder) {
             OrderSheet(pantry: pantry, haptics: haptics)
         }
+        .sheet(isPresented: $showReminder) {
+            ReminderSheet(isOn: $remindersOn, haptics: haptics)
+        }
         .sheet(item: $weighing) { item in
             WeighSheet(item: item, pantry: pantry, haptics: haptics)
         }
     }
 
+    /// One reminder covers groceries and steps together, so this opens the
+    /// single place it is configured rather than carrying its own switch.
     private var bellButton: some View {
         Button {
             haptics.soft()
-            remindersOn.toggle()
-            GroceryReminder.isEnabled = remindersOn
-            Task { await GroceryReminder.apply() }
+            showReminder = true
         } label: {
             Image(systemName: remindersOn ? "bell.fill" : "bell.slash")
                 .font(.system(size: 12, weight: .black))

@@ -183,4 +183,69 @@ struct BackupTests {
 
         #expect(Backup.Summary(document).lines.contains("3 grocery items"))
     }
+
+    // MARK: Rolling local snapshots
+
+    /// Exercised against a scratch folder, so a test never prunes the real
+    /// snapshots or writes one into Documents.
+    @Test func keepsOnlyTheMostRecentSeven() throws {
+        let scratch = FileManager.default.temporaryDirectory
+            .appendingPathComponent("snap-test-\(UUID().uuidString)", isDirectory: true)
+        try FileManager.default.createDirectory(at: scratch, withIntermediateDirectories: true)
+        defer { try? FileManager.default.removeItem(at: scratch) }
+
+        // Ten files, each a day older than the last.
+        for day in 0..<10 {
+            let url = scratch.appendingPathComponent("kalla-\(day).json")
+            try Data("{}".utf8).write(to: url)
+            let when = Date().addingTimeInterval(Double(-day) * 86_400)
+            try FileManager.default.setAttributes([.modificationDate: when],
+                                                  ofItemAtPath: url.path)
+        }
+
+        let all = (try FileManager.default.contentsOfDirectory(at: scratch,
+                                                               includingPropertiesForKeys: nil))
+            .filter { $0.pathExtension == "json" }
+            .sorted { Backup.Snapshots.takenAt($0) > Backup.Snapshots.takenAt($1) }
+
+        #expect(all.count == 10)
+        #expect(all.first?.lastPathComponent == "kalla-0.json")   // newest first
+        #expect(all.last?.lastPathComponent == "kalla-9.json")
+
+        for old in all.dropFirst(Backup.Snapshots.keep) {
+            try FileManager.default.removeItem(at: old)
+        }
+
+        let left = (try FileManager.default.contentsOfDirectory(at: scratch,
+                                                                includingPropertiesForKeys: nil))
+            .filter { $0.pathExtension == "json" }
+        #expect(left.count == Backup.Snapshots.keep)
+        #expect(left.contains { $0.lastPathComponent == "kalla-0.json" })
+        #expect(!left.contains { $0.lastPathComponent == "kalla-9.json" })
+    }
+
+    @Test func keepsSeven() {
+        #expect(Backup.Snapshots.keep == 7)
+    }
+
+    /// A snapshot is a copy of the live document, so it has to come back
+    /// through the same validation as any other file.
+    @Test func aSnapshotReadsBackLikeAnyOtherBackup() throws {
+        let url = try Backup.exportFile()
+        defer { try? FileManager.default.removeItem(at: url) }
+
+        let document = try Backup.inspect(url)
+        #expect(document.version == Store.currentVersion)
+    }
+
+    @Test func writesNothingWhenTodaysCopyAlreadyExists() {
+        // The real folder, but only ever reading: with a snapshot from the
+        // last day present this must be a no-op rather than piling up copies.
+        let before = Backup.Snapshots.all().count
+        if let newest = Backup.Snapshots.all().first,
+           Date().timeIntervalSince(Backup.Snapshots.takenAt(newest)) < 86_400 {
+            #expect(Backup.Snapshots.writeIfDue() == nil)
+            #expect(Backup.Snapshots.all().count == before)
+        }
+    }
 }

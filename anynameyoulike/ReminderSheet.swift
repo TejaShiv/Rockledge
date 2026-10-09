@@ -13,7 +13,7 @@ struct ReminderSheet: View {
     let haptics: GrainHaptics
     @Environment(\.dismiss) private var dismiss
 
-    @State private var time = DailyReminder.timeAsDate
+    @State private var time = NightlyReminder.timeAsDate
     @State private var note = ""
 
     var body: some View {
@@ -63,11 +63,12 @@ struct ReminderSheet: View {
         VStack(spacing: 12) {
             Button {
                 Task {
-                    let ok = await DailyReminder.schedule(at: time)
+                    NightlyReminder.isEnabled = true
+                    let ok = await NightlyReminder.apply(at: time)
                     isOn = ok
                     haptics.commit()
                     note = ok
-                        ? "set for \(DailyReminder.timeText) daily"
+                        ? "set for \(NightlyReminder.timeText) daily"
                         : "allow notifications in Settings"
                 }
             } label: {
@@ -85,7 +86,7 @@ struct ReminderSheet: View {
                 Button {
                     haptics.soft()
                     Task {
-                        let ok = await DailyReminder.fireTestSoon()
+                        let ok = await NightlyReminder.fireTestSoon()
                         note = ok ? "test in 10s, lock the phone" : "allow notifications first"
                     }
                 } label: {
@@ -109,7 +110,7 @@ struct ReminderSheet: View {
 
                 if isOn {
                     Button {
-                        DailyReminder.cancel()
+                        NightlyReminder.cancel()
                         isOn = false
                         haptics.soft()
                         note = "reminder off"

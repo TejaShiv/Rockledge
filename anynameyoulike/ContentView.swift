@@ -25,6 +25,7 @@ struct ContentView: View {
     @State private var rota = TrashRota.load()
     @State private var showTrash = false
     @State private var showBackup = false
+    @State private var sharingOnOpen = false
 
     @Environment(\.accessibilityReduceMotion) private var reduceMotion
     @Environment(\.scenePhase) private var scenePhase
@@ -115,7 +116,7 @@ struct ContentView: View {
             TrashSheet(rota: $rota, haptics: haptics)
         }
         .sheet(isPresented: $showBackup) {
-            BackupSheet(haptics: haptics) {
+            BackupSheet(haptics: haptics, openSharing: sharingOnOpen) {
                 // The document underneath has been swapped out.
                 rota = TrashRota.load()
                 pantry.reload()
@@ -125,6 +126,10 @@ struct ContentView: View {
         }
         .onAppear {
             if !reduceMotion { motion.start() }
+            landFromNotification()
+        }
+        .onChange(of: scenePhase) { _, phase in
+            if phase == .active { landFromNotification() }
         }
         .onChange(of: scenePhase) { _, phase in
             if phase == .active {
@@ -132,11 +137,12 @@ struct ContentView: View {
             }
         }
         .task {
+            // A dated copy a day, before anything can change the document.
+            Backup.Snapshots.writeIfDue()
+
             await HealthAuth.request()
-            _ = try? await UNUserNotificationCenter.current()
-                .requestAuthorization(options: [.alert, .sound])
             await TrashReminder.reschedule(rota)
-            await GroceryReminder.apply()
+            await NightlyReminder.apply()
             await refresh()
         }
     }
@@ -193,6 +199,14 @@ struct ContentView: View {
         f.dateFormat = "HH:mm"
         return f
     }()
+
+    /// A tap on the nightly reminder lands here: open the backup screen with
+    /// the share sheet already up.
+    private func landFromNotification() {
+        guard Shared.router.take() == .export else { return }
+        sharingOnOpen = true
+        showBackup = true
+    }
 
     private func refresh() async {
         steps = await writer.todayTotal()
