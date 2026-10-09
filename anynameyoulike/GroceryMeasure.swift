@@ -202,9 +202,14 @@ final class Pantry {
         save()
     }
 
+    /// A pack arrives on top of whatever was already there.
+    ///
+    /// Additive rather than a reset: restocking with three loose left leaves
+    /// fifteen, not twelve. Nothing else in the app throws stock away, and
+    /// this should not either.
     func restock(_ item: GroceryItem) {
         guard let i = index(of: item) else { return }
-        items[i].remaining = items[i].fullAmount
+        items[i].remaining += items[i].fullAmount
         items[i].openedAt = Date()
         items[i].lastOrdered = nil
         save()

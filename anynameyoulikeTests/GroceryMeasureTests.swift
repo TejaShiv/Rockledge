@@ -188,4 +188,56 @@ struct GroceryMeasureTests {
         let half = item(.count, pack: 12, left: 6)
         #expect(max(0, half.remaining - half.fullAmount) == 0)
     }
+
+    // MARK: Restocking
+
+    /// A new pack on top of three loose is fifteen, not twelve.
+    @Test func restockingAddsAPackToWhatIsThere() {
+        let eggs = item(.count, pack: 12, left: 3)
+        let pantry = Pantry(items: [eggs])
+
+        pantry.restock(eggs)
+
+        #expect(pantry.items[0].remaining == 15)
+    }
+
+    @Test func restockingAnEmptyItemGivesExactlyAPack() {
+        let eggs = item(.count, pack: 12, left: 0)
+        let pantry = Pantry(items: [eggs])
+
+        pantry.restock(eggs)
+
+        #expect(pantry.items[0].remaining == 12)
+    }
+
+    @Test func restockingTwiceGivesTwoPacks() {
+        let eggs = item(.count, pack: 12, left: 0)
+        let pantry = Pantry(items: [eggs])
+
+        pantry.restock(eggs)
+        pantry.restock(eggs)
+
+        #expect(pantry.items[0].remaining == 24)
+    }
+
+    /// A weighed pack adds its usable contents, not its gross weight.
+    @Test func restockingAWeighedItemAddsTheNetPack() {
+        let rice = item(.weigh, pack: 1000, left: 200, tare: 100)
+        let pantry = Pantry(items: [rice])
+
+        pantry.restock(rice)
+
+        #expect(pantry.items[0].remaining == 1100)   // 200 + (1000 - 100)
+    }
+
+    @Test func restockingClearsTheOrderedMark() {
+        let eggs = item(.count, pack: 12, left: 0)
+        let pantry = Pantry(items: [eggs])
+
+        pantry.markOrdered(eggs)
+        #expect(pantry.items[0].lastOrdered != nil)
+
+        pantry.restock(eggs)
+        #expect(pantry.items[0].lastOrdered == nil)
+    }
 }
