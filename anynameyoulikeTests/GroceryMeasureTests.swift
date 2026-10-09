@@ -240,4 +240,38 @@ struct GroceryMeasureTests {
         pantry.restock(eggs)
         #expect(pantry.items[0].lastOrdered == nil)
     }
+
+    /// Topping up is not starting over: the rate has to survive it, or every
+    /// restock would send days-left back to the guess made on day one.
+    @Test func restockingKeepsTheLearnedRate() {
+        let cal = Calendar.current
+        let today = cal.startOfDay(for: Date())
+
+        // Opened four days ago, so the window the rate averages over is the
+        // same four days that were logged. It divides by elapsed days rather
+        // than by days used, so a longer window with the same total would
+        // read as a slower rate.
+        var eggs = item(.count, pack: 12, left: 2)
+        eggs.openedAt = cal.date(byAdding: .day, value: -4, to: today)!
+        eggs.startRate = 1                      // the guess, deliberately wrong
+
+        // Four days of really eating three a day.
+        let log = (1...4).map { day in
+            UseEntry(
+                itemID: eggs.id,
+                date: cal.date(byAdding: .day, value: -day, to: today)!,
+                amount: 3
+            )
+        }
+        let pantry = Pantry(items: [eggs], log: log)
+
+        let before = pantry.rate(for: pantry.items[0])
+        #expect(before > 1.5)                   // it has learned something
+
+        pantry.restock(eggs)
+
+        #expect(pantry.rate(for: pantry.items[0]) == before)
+        #expect(pantry.items[0].openedAt == eggs.openedAt)
+        #expect(pantry.items[0].remaining == 14)
+    }
 }

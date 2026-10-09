@@ -207,10 +207,14 @@ final class Pantry {
     /// Additive rather than a reset: restocking with three loose left leaves
     /// fifteen, not twelve. Nothing else in the app throws stock away, and
     /// this should not either.
+    ///
+    /// `openedAt` is left where it is. It bounds how far back the rate looks,
+    /// so moving it to now would throw away the observed usage and send the
+    /// estimate back to the guess made when the item was added. Topping up is
+    /// not starting over.
     func restock(_ item: GroceryItem) {
         guard let i = index(of: item) else { return }
         items[i].remaining += items[i].fullAmount
-        items[i].openedAt = Date()
         items[i].lastOrdered = nil
         save()
     }
