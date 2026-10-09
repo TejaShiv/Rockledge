@@ -145,7 +145,10 @@ struct GroceryDashboard: View {
     private func summary(of meal: Meal) -> String {
         let parts = meal.portions.compactMap { portion -> String? in
             guard let item = pantry.item(withID: portion.itemID) else { return nil }
-            return "\(MealOutcome.trim(portion.amount))\(item.unit) \(item.name.lowercased())"
+            // "250g" reads fine, "4slices" does not: a symbol joins the
+            // number, a word needs a space.
+            let gap = item.unit.count <= 2 ? "" : " "
+            return "\(MealOutcome.trim(portion.amount))\(gap)\(item.unit) \(item.name.lowercased())"
         }
         return parts.isEmpty ? "nothing in it yet" : parts.joined(separator: ", ")
     }
@@ -263,6 +266,11 @@ private struct ItemRow: View {
         "\(fmt(item.remaining)) \(item.unit)"
     }
 
+    /// How much there is beyond one full pack.
+    private var overflow: Double {
+        max(0, item.remaining - item.fullAmount)
+    }
+
     var body: some View {
         VStack(spacing: 12) {
             HStack(alignment: .firstTextBaseline) {
@@ -294,6 +302,16 @@ private struct ItemRow: View {
                     .lineLimit(1)
                     .foregroundStyle(Palette.bone)
                     .contentTransition(.numericText())
+
+                if overflow > 0 {
+                    Text("+\(fmt(overflow))")
+                        .font(.system(size: 10, weight: .black).monospacedDigit())
+                        .tracking(0.8)
+                        .foregroundStyle(Palette.bone.opacity(0.9))
+                        .padding(.horizontal, 7)
+                        .padding(.vertical, 3)
+                        .background(Capsule().fill(Palette.red.opacity(0.75)))
+                }
 
                 Spacer()
 
@@ -369,12 +387,18 @@ private struct ItemRow: View {
                 }
             }
 
+            // The bar answers "how much of a pack is left", so it is capped
+            // at a pack rather than rescaled. Rescaling would make a full bar
+            // mean something different at every amount — 15 of 15 and 13 of
+            // 13 would both look full — and the proportion is the only thing
+            // a four point line can say. Being over a pack is said in words
+            // instead, beside the number, which already reads true.
             GeometryReader { geo in
                 let span = max(0.0, min(1.0, item.remaining / max(item.fullAmount, 0.001)))
                 ZStack(alignment: .leading) {
                     Capsule().fill(Palette.bone.opacity(0.08))
                     Capsule()
-                        .fill(urgency.opacity(0.75))
+                        .fill(urgency.opacity(overflow > 0 ? 1 : 0.75))
                         .frame(width: geo.size.width * span)
                 }
             }
@@ -749,7 +773,9 @@ private struct ItemEditor: View {
         if remaining.trimmingCharacters(in: .whitespaces).isEmpty {
             stock = draft?.remaining ?? full
         } else {
-            stock = min(max(number(remaining), 0), full)
+            // Not capped at a pack: a full 12 and 3 loose is 15, and that is
+            // a real answer. Only below zero is impossible.
+            stock = max(number(remaining), 0)
         }
 
         if var existing = draft {

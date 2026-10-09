@@ -130,4 +130,62 @@ struct GroceryMeasureTests {
         #expect(tapped.log.reduce(0) { $0 + $1.amount }
                 == typed.log.reduce(0) { $0 + $1.amount })
     }
+
+    // MARK: More than a pack
+
+    /// A full 12 and 3 loose is 15, and nothing should round that down.
+    @Test func undoPutsStockBackAboveAPack() {
+        let eggs = item(.count, pack: 12, left: 15)
+        let pantry = Pantry(items: [eggs])
+
+        pantry.logUse(eggs, amount: 1)
+        #expect(pantry.items[0].remaining == 14)
+
+        pantry.logUse(eggs, amount: -1)
+        #expect(pantry.items[0].remaining == 15)   // not snapped back to 12
+    }
+
+    @Test func undoFromAFullPackGoesOverIt() {
+        let eggs = item(.count, pack: 12, left: 12)
+        let pantry = Pantry(items: [eggs])
+
+        pantry.logUse(eggs, amount: -3)
+
+        #expect(pantry.items[0].remaining == 15)
+    }
+
+    /// Weighing already allowed it, and still must.
+    @Test func weighingCanReadAboveAPack() {
+        let rice = item(.weigh, pack: 1000, left: 400, tare: 100)
+        let pantry = Pantry(items: [rice])
+
+        pantry.setGross(rice, gross: 1500)         // net 1400, pack is 900
+
+        #expect(pantry.items[0].remaining == 1400)
+    }
+
+    /// Taking from an over-full item is ordinary subtraction, and the floor
+    /// at zero stays.
+    @Test func takingFromOverAPackIsUnremarkable() {
+        let eggs = item(.count, pack: 12, left: 15)
+        let pantry = Pantry(items: [eggs])
+
+        #expect(pantry.take(eggs, amount: 4).taken == 4)
+        #expect(pantry.items[0].remaining == 11)
+        #expect(pantry.take(eggs, amount: 50).short == 39)
+        #expect(pantry.items[0].remaining == 0)
+    }
+
+    /// The bar is a proportion of a pack, so it is capped; the overflow is
+    /// what gets shown beside the number instead.
+    @Test func theBarCapsAndTheOverflowIsSeparate() {
+        let eggs = item(.count, pack: 12, left: 15)
+
+        let span = max(0.0, min(1.0, eggs.remaining / max(eggs.fullAmount, 0.001)))
+        #expect(span == 1.0)
+        #expect(max(0, eggs.remaining - eggs.fullAmount) == 3)
+
+        let half = item(.count, pack: 12, left: 6)
+        #expect(max(0, half.remaining - half.fullAmount) == 0)
+    }
 }

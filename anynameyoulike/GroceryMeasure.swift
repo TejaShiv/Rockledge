@@ -178,7 +178,9 @@ final class Pantry {
             log.append(UseEntry(itemID: item.id, date: Date(), amount: taken))
         } else {
             let give = -amount
-            items[i].remaining = min(items[i].fullAmount, items[i].remaining + give)
+            // Not capped at a pack either: undoing a use on top of loose
+            // stock has to be able to put it back where it was.
+            items[i].remaining += give
             let today = Calendar.current.startOfDay(for: Date())
             if let last = log.lastIndex(where: { $0.itemID == item.id && $0.date >= today }) {
                 log[last].amount -= give
