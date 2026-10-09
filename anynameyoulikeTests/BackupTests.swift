@@ -248,4 +248,64 @@ struct BackupTests {
             #expect(Backup.Snapshots.all().count == before)
         }
     }
+
+    // MARK: When to put the share sheet up
+
+    private var day: TimeInterval { 24 * 60 * 60 }
+
+    @Test func nagsWhenNothingHasEverBeenExported() {
+        #expect(Backup.isExportOverdue(lastExport: nil, hasContent: true))
+    }
+
+    @Test func staysQuietJustAfterAnExport() {
+        let now = Date()
+        #expect(!Backup.isExportOverdue(
+            lastExport: now.addingTimeInterval(-day), hasContent: true, now: now
+        ))
+        #expect(!Backup.isExportOverdue(
+            lastExport: now.addingTimeInterval(-4 * day), hasContent: true, now: now
+        ))
+    }
+
+    /// Five days, so it lands before a seven-day profile lapses.
+    @Test func nagsOncePastFiveDays() {
+        let now = Date()
+
+        #expect(!Backup.isExportOverdue(
+            lastExport: now.addingTimeInterval(-5 * day + 60), hasContent: true, now: now
+        ))
+        #expect(Backup.isExportOverdue(
+            lastExport: now.addingTimeInterval(-5 * day - 60), hasContent: true, now: now
+        ))
+        #expect(Backup.overdueAfter < 7 * day)
+    }
+
+    /// A container that was just wiped has nothing to protect, and should not
+    /// ask to back up its emptiness.
+    @Test func saysNothingWhenThereIsNothingToLose() {
+        #expect(!Backup.isExportOverdue(lastExport: nil, hasContent: false))
+        #expect(!Backup.isExportOverdue(
+            lastExport: Date().addingTimeInterval(-30 * day), hasContent: false
+        ))
+    }
+
+    @Test func knowsWhatIsWorthKeeping() {
+        #expect(!Backup.Summary(Store.Document()).isWorthKeeping)
+
+        var withItems = Store.Document()
+        withItems.groceryItems = [
+            GroceryItem(name: "Eggs", measure: .count, unit: "units",
+                        packSize: 12, remaining: 9, startRate: 2)
+        ]
+        #expect(Backup.Summary(withItems).isWorthKeeping)
+
+        var withPeople = Store.Document()
+        withPeople.trashRota.people = ["Me", "Agilan"]
+        #expect(Backup.Summary(withPeople).isWorthKeeping)
+
+        // One person is the default rota, which is not worth a prompt.
+        var alone = Store.Document()
+        alone.trashRota.people = ["Me"]
+        #expect(!Backup.Summary(alone).isWorthKeeping)
+    }
 }

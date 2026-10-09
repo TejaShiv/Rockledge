@@ -80,6 +80,8 @@ struct BackupSheet: View {
         ) { incoming in
             Button("Replace", role: .destructive) {
                 Backup.restore(incoming.document)
+                // Restoring from a file proves a copy exists outside the app.
+                Backup.recordExport()
                 haptics.commit()
                 onRestored()
                 dismiss()
@@ -300,7 +302,17 @@ struct ShareSheet: UIViewControllerRepresentable {
     let url: URL
 
     func makeUIViewController(context: Context) -> UIActivityViewController {
-        UIActivityViewController(activityItems: [url], applicationActivities: nil)
+        let controller = UIActivityViewController(
+            activityItems: [url], applicationActivities: nil
+        )
+
+        // Only a finished share counts. Cancelling leaves the clock running,
+        // so the prompt comes back next launch rather than being dodged by
+        // opening the sheet and closing it.
+        controller.completionWithItemsHandler = { _, completed, _, _ in
+            if completed { Backup.recordExport() }
+        }
+        return controller
     }
 
     func updateUIViewController(_ controller: UIActivityViewController, context: Context) {}

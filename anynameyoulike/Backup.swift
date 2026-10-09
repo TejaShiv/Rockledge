@@ -50,6 +50,11 @@ nonisolated enum Backup {
             ]
         }
 
+        /// Whether there is anything here that losing would hurt.
+        var isWorthKeeping: Bool {
+            groceryItems > 0 || useLog > 0 || stepBatches > 0 || people > 1
+        }
+
         init(_ document: Store.Document) {
             groceryItems = document.groceryItems.count
             useLog = document.useLog.count
@@ -57,6 +62,40 @@ nonisolated enum Backup {
             stepBatches = document.stepLedger.count
             savedAt = document.savedAt
         }
+    }
+
+    // MARK: When one was last taken
+
+    /// Five days, so the prompt lands before a free seven-day profile lapses
+    /// and takes the container with it.
+    static let overdueAfter: TimeInterval = 5 * 24 * 60 * 60
+
+    private static let lastExportKey = "backupLastExport"
+
+    /// When a copy last actually left the app.
+    ///
+    /// Only set when a share or an import completed. Opening the share sheet
+    /// and cancelling is not a backup, and must not quiet the prompt.
+    static var lastExport: Date? {
+        get { UserDefaults.standard.object(forKey: lastExportKey) as? Date }
+        set { UserDefaults.standard.set(newValue, forKey: lastExportKey) }
+    }
+
+    static func recordExport(at when: Date = Date()) {
+        lastExport = when
+    }
+
+    /// Whether to put the share sheet up on launch.
+    ///
+    /// Pure, so the rule can be tested without a clock or a document.
+    /// Nothing worth keeping means nothing to nag about: a container that was
+    /// just wiped should not be asking to back up its emptiness.
+    static func isExportOverdue(lastExport: Date?,
+                                hasContent: Bool,
+                                now: Date = Date()) -> Bool {
+        guard hasContent else { return false }
+        guard let lastExport else { return true }   // never exported
+        return now.timeIntervalSince(lastExport) > overdueAfter
     }
 
     // MARK: Export
