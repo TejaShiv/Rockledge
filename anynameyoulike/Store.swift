@@ -20,6 +20,10 @@ import Synchronization
 nonisolated enum Store {
     static let fileName = "kalla.json"
 
+    /// Bumped when the document's shape changes in a way an older build
+    /// could not read. Import refuses anything above this.
+    static let currentVersion = 1
+
     private static let migratedKey = "storeMigratedV2"
 
     /// Holds the loaded document, or nil before the first read.
@@ -36,7 +40,7 @@ nonisolated enum Store {
     /// One top-level object. Keys decode independently, so a hand-edited file
     /// that is missing a section still opens, with that section empty.
     struct Document: Codable {
-        var version = 1
+        var version = Store.currentVersion
         var savedAt = Date()
         var groceryItems: [GroceryItem] = []
         var useLog: [UseEntry] = []
@@ -62,7 +66,7 @@ nonisolated enum Store {
                 ((try? c.decodeIfPresent(T.self, forKey: key)) ?? nil) ?? fallback
             }
 
-            version = value(.version, 1)
+            version = value(.version, Store.currentVersion)
             savedAt = value(.savedAt, Date())
             groceryItems = value(.groceryItems, [])
             useLog = value(.useLog, [])
@@ -90,6 +94,18 @@ nonisolated enum Store {
         cache.withLock { slot in
             var doc = loaded(&slot)
             body(&doc)
+            doc.savedAt = Date()
+            slot = doc
+            write(doc)
+        }
+    }
+
+    /// Replaces the entire document. Used by import, which has already
+    /// checked the incoming file; everything else should go through mutate.
+    static func replace(with incoming: Document) {
+        cache.withLock { slot in
+            var doc = incoming
+            doc.version = currentVersion
             doc.savedAt = Date()
             slot = doc
             write(doc)

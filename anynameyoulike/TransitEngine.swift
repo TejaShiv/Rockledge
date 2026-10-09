@@ -161,6 +161,21 @@ final class Transit {
         usedFallback = cached.usedFallback
         isStale = cached.fetchedAt != nil
 
+        reloadFromStore()
+    }
+
+    /// Re-reads everything cached, for when the document is replaced wholesale
+    /// by an import.
+    func reloadFromStore() {
+        let dashboard = Store.document.transit
+        baseStop = dashboard.stop
+        selectedStop = nil
+        arrivals = dashboard.arrivals
+        alerts = dashboard.alerts
+        fetchedAt = dashboard.fetchedAt
+        usedFallback = dashboard.usedFallback
+        isStale = dashboard.fetchedAt != nil
+
         let home = Store.document.transitHome
         homeArrivals = home.arrivals
         homeFetchedAt = home.fetchedAt

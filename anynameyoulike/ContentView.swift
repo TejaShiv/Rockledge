@@ -24,6 +24,7 @@ struct ContentView: View {
     @State private var steps: Int?
     @State private var rota = TrashRota.load()
     @State private var showTrash = false
+    @State private var showBackup = false
 
     @Environment(\.accessibilityReduceMotion) private var reduceMotion
     @Environment(\.scenePhase) private var scenePhase
@@ -86,7 +87,21 @@ struct ContentView: View {
 
                     Spacer()
 
-                    Signature()
+                    HStack(spacing: 12) {
+                        Signature()
+
+                        Button {
+                            haptics.soft()
+                            showBackup = true
+                        } label: {
+                            Image(systemName: "square.and.arrow.up")
+                                .font(.system(size: 12, weight: .black))
+                                .frame(width: 30, height: 30)
+                                .foregroundStyle(Palette.bone.opacity(0.3))
+                                .background(Circle().fill(Palette.steel.opacity(0.7)))
+                        }
+                        .buttonStyle(.plain)
+                    }
                 }
                 .padding(.horizontal, 20)
                 .padding(.bottom, 16)
@@ -98,6 +113,15 @@ struct ContentView: View {
         .preferredColorScheme(.dark)
         .sheet(isPresented: $showTrash) {
             TrashSheet(rota: $rota, haptics: haptics)
+        }
+        .sheet(isPresented: $showBackup) {
+            BackupSheet(haptics: haptics) {
+                // The document underneath has been swapped out.
+                rota = TrashRota.load()
+                pantry.reload()
+                transit.reloadFromStore()
+                Task { await refresh() }
+            }
         }
         .onAppear {
             if !reduceMotion { motion.start() }
