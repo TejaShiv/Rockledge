@@ -67,27 +67,50 @@ nonisolated enum NightlyReminder {
     /// was explicitly chosen, because this fires at the end of the day and the
     /// earlier of two settings would go off before the day is done. With
     /// nothing chosen it lands on the new default.
+    /// What the two old reminders add up to.
+    ///
+    /// Pure, so it can be checked without UserDefaults underneath it: the
+    /// tests run inside the app, which migrates on its own at launch and
+    /// would race them.
+    ///
+    /// A nil time means nothing was ever chosen, so the new default stands.
+    static func carriedOver(from old: [String: Any])
+        -> (enabled: Bool, hour: Int?, minute: Int?)
+    {
+        // These defaults are what each old reminder used.
+        let stepsOn = old["reminderEnabled"] as? Bool ?? false
+        let groceriesOn = old["groceryReminderOn"] as? Bool ?? true
+
+        var chosen: [(hour: Int, minute: Int)] = []
+        if let h = old["reminderHour"] as? Int {
+            chosen.append((h, old["reminderMinute"] as? Int ?? 0))
+        }
+        if let h = old["groceryReminderHour"] as? Int {
+            chosen.append((h, old["groceryReminderMinute"] as? Int ?? 0))
+        }
+
+        let latest = chosen.max { $0.hour * 60 + $0.minute < $1.hour * 60 + $1.minute }
+        return (stepsOn || groceriesOn, latest?.hour, latest?.minute)
+    }
+
     private static func migrateIfNeeded() {
         let defaults = UserDefaults.standard
         guard !defaults.bool(forKey: migratedKey) else { return }
         defer { defaults.set(true, forKey: migratedKey) }
 
-        // Defaults here match what each old reminder used.
-        let stepsOn = defaults.object(forKey: "reminderEnabled") as? Bool ?? false
-        let groceriesOn = defaults.object(forKey: "groceryReminderOn") as? Bool ?? true
-        defaults.set(stepsOn || groceriesOn, forKey: enabledKey)
+        let carried = Self.carriedOver(from: [
+            "reminderEnabled": defaults.object(forKey: "reminderEnabled") as Any,
+            "reminderHour": defaults.object(forKey: "reminderHour") as Any,
+            "reminderMinute": defaults.object(forKey: "reminderMinute") as Any,
+            "groceryReminderOn": defaults.object(forKey: "groceryReminderOn") as Any,
+            "groceryReminderHour": defaults.object(forKey: "groceryReminderHour") as Any,
+            "groceryReminderMinute": defaults.object(forKey: "groceryReminderMinute") as Any,
+        ])
 
-        var chosen: [(hour: Int, minute: Int)] = []
-        if let h = defaults.object(forKey: "reminderHour") as? Int {
-            chosen.append((h, defaults.object(forKey: "reminderMinute") as? Int ?? 0))
-        }
-        if let h = defaults.object(forKey: "groceryReminderHour") as? Int {
-            chosen.append((h, defaults.object(forKey: "groceryReminderMinute") as? Int ?? 0))
-        }
-
-        if let latest = chosen.max(by: { $0.hour * 60 + $0.minute < $1.hour * 60 + $1.minute }) {
-            defaults.set(latest.hour, forKey: hourKey)
-            defaults.set(latest.minute, forKey: minuteKey)
+        defaults.set(carried.enabled, forKey: enabledKey)
+        if let hour = carried.hour, let minute = carried.minute {
+            defaults.set(hour, forKey: hourKey)
+            defaults.set(minute, forKey: minuteKey)
         }
 
         // One source of truth from here on.

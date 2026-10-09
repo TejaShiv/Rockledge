@@ -15,6 +15,21 @@
 	<!-- When-in-use only, and only asked for when the MBTA screen opens.
 	     There is no "always" key here on purpose: the app has no reason to
 	     know where you are while it is closed. -->
+	<!-- Siri needs a pronounceable app name: every App Shortcut phrase has to
+	     contain one, and the display name is deliberately blank. These are
+	     names Siri will accept without changing the home screen label. -->
+	<key>INAlternativeAppNames</key>
+	<array>
+		<dict>
+			<key>INAlternativeAppName</key>
+			<string>Kalla</string>
+		</dict>
+		<dict>
+			<key>INAlternativeAppName</key>
+			<string>Pantry</string>
+		</dict>
+	</array>
+
 	<key>NSLocationWhenInUseUsageDescription</key>
 	<string>Finds the nearest bus stop so the app can show you the next arrivals. Only used while the MBTA screen is open.</string>
 </dict>

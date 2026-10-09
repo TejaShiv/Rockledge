@@ -12,6 +12,7 @@ struct GroceryDashboard: View {
     @State private var showOrder = false
     @State private var weighing: GroceryItem?
     @State private var typing: GroceryItem?
+    @State private var editingMeal: Meal?
     @State private var remindersOn = NightlyReminder.isEnabled
     @State private var showReminder = false
 
@@ -47,6 +48,7 @@ struct GroceryDashboard: View {
                         }
 
                         addButton
+                        mealsPanel
                     }
                     .padding(.horizontal, 20)
                     .padding(.top, 4)
@@ -76,6 +78,76 @@ struct GroceryDashboard: View {
         .sheet(item: $typing) { item in
             UsedSheet(item: item, pantry: pantry, haptics: haptics)
         }
+        .sheet(item: $editingMeal) { meal in
+            MealSheet(meal: meal, pantry: pantry, haptics: haptics)
+        }
+    }
+
+    /// Meals are what Siri logs: "had lunch" takes all of these off at once.
+    private var mealsPanel: some View {
+        VStack(alignment: .leading, spacing: 10) {
+            Text("meals")
+                .font(.system(size: 9, weight: .black))
+                .tracking(1.6)
+                .foregroundStyle(Palette.bone.opacity(0.3))
+
+            ForEach(pantry.meals) { meal in
+                Button {
+                    haptics.soft()
+                    editingMeal = meal
+                } label: {
+                    HStack(spacing: 10) {
+                        Text(meal.spokenName)
+                            .font(.system(size: 15, weight: .bold))
+                            .foregroundStyle(Palette.bone.opacity(0.85))
+
+                        Spacer(minLength: 8)
+
+                        Text(summary(of: meal))
+                            .font(.system(size: 11, weight: .medium))
+                            .lineLimit(1)
+                            .foregroundStyle(Palette.bone.opacity(0.35))
+                    }
+                    .padding(.vertical, 7)
+                    .contentShape(Rectangle())
+                }
+                .buttonStyle(.plain)
+            }
+
+            Button {
+                haptics.soft()
+                editingMeal = Meal(name: "")
+            } label: {
+                Text("+ add a meal")
+                    .font(.system(size: 13, weight: .bold))
+                    .foregroundStyle(Palette.bone.opacity(0.4))
+                    .frame(maxWidth: .infinity)
+                    .frame(height: 44)
+                    .background(
+                        RoundedRectangle(cornerRadius: 20, style: .continuous)
+                            .strokeBorder(
+                                Palette.bone.opacity(0.14),
+                                style: StrokeStyle(lineWidth: 1.2, dash: [6, 5])
+                            )
+                    )
+            }
+            .buttonStyle(.plain)
+
+            Text("say \"had lunch with Kalla\" to log one")
+                .font(.system(size: 10, weight: .medium))
+                .foregroundStyle(Palette.bone.opacity(0.28))
+        }
+        .padding(20)
+        .frame(maxWidth: .infinity, alignment: .leading)
+        .glassBackdrop(cornerRadius: 28, tint: Palette.bone.opacity(0.06))
+    }
+
+    private func summary(of meal: Meal) -> String {
+        let parts = meal.portions.compactMap { portion -> String? in
+            guard let item = pantry.item(withID: portion.itemID) else { return nil }
+            return "\(MealOutcome.trim(portion.amount))\(item.unit) \(item.name.lowercased())"
+        }
+        return parts.isEmpty ? "nothing in it yet" : parts.joined(separator: ", ")
     }
 
     /// One reminder covers groceries and steps together, so this opens the
@@ -917,5 +989,181 @@ private struct UsedSheet: View {
         value == value.rounded()
             ? String(Int(value))
             : String(format: "%.1f", value)
+    }
+}
+
+
+/// Building a meal: a name, and an amount of each item it uses.
+private struct MealSheet: View {
+    let meal: Meal
+    let pantry: Pantry
+    let haptics: GrainHaptics
+    @Environment(\.dismiss) private var dismiss
+
+    @State private var name = ""
+    @State private var amounts: [UUID: String] = [:]
+    @State private var loaded = false
+
+    var body: some View {
+        ZStack {
+            LinearGradient(
+                colors: [Palette.inkLow, Palette.ink],
+                startPoint: .topTrailing,
+                endPoint: .bottomLeading
+            )
+            .ignoresSafeArea()
+
+            VStack(spacing: 0) {
+                SheetHeader(title: "meal", showRefresh: false) {} onClose: { dismiss() }
+
+                ScrollView {
+                    VStack(spacing: 18) {
+                        namePanel
+                        itemsPanel
+                        buttons
+                    }
+                    .padding(.horizontal, 20)
+                    .padding(.bottom, 40)
+                }
+            }
+        }
+        .preferredColorScheme(.dark)
+        .fontDesign(.rounded)
+        .onAppear(perform: load)
+    }
+
+    private func load() {
+        guard !loaded else { return }
+        loaded = true
+        name = meal.name
+        for portion in meal.portions {
+            amounts[portion.itemID] = MealOutcome.trim(portion.amount)
+        }
+    }
+
+    private var namePanel: some View {
+        VStack(alignment: .leading, spacing: 6) {
+            Text("what you call it out loud")
+                .font(.system(size: 9, weight: .black))
+                .tracking(1.4)
+                .foregroundStyle(Palette.bone.opacity(0.3))
+
+            TextField("lunch", text: $name)
+                .font(.system(size: 22, weight: .heavy))
+                .foregroundStyle(Palette.bone)
+                .tint(Palette.redHot)
+                .submitLabel(.done)
+        }
+        .padding(18)
+        .frame(maxWidth: .infinity, alignment: .leading)
+        .glassBackdrop(cornerRadius: 26, tint: Palette.bone.opacity(0.06))
+    }
+
+    /// Every item, with a blank amount meaning "not in this meal", so adding
+    /// and removing is the same gesture as changing an amount.
+    private var itemsPanel: some View {
+        VStack(alignment: .leading, spacing: 10) {
+            Text("how much of each")
+                .font(.system(size: 9, weight: .black))
+                .tracking(1.4)
+                .foregroundStyle(Palette.bone.opacity(0.3))
+
+            if pantry.items.isEmpty {
+                Text("add an item first")
+                    .font(.system(size: 13, weight: .bold))
+                    .foregroundStyle(Palette.bone.opacity(0.35))
+            }
+
+            ForEach(pantry.items) { item in
+                HStack(spacing: 10) {
+                    Text(item.name.lowercased())
+                        .font(.system(size: 15, weight: .bold))
+                        .foregroundStyle(Palette.bone.opacity(0.85))
+
+                    Spacer(minLength: 8)
+
+                    TextField("—", text: Binding(
+                        get: { amounts[item.id] ?? "" },
+                        set: { amounts[item.id] = $0 }
+                    ))
+                    .keyboardType(.decimalPad)
+                    .multilineTextAlignment(.trailing)
+                    .font(.system(size: 17, weight: .black).monospacedDigit())
+                    .foregroundStyle(Palette.bone)
+                    .tint(Palette.redHot)
+                    .frame(width: 70)
+
+                    Text(item.unit)
+                        .font(.system(size: 11, weight: .black))
+                        .foregroundStyle(Palette.bone.opacity(0.35))
+                        .frame(width: 42, alignment: .leading)
+                }
+                .padding(.vertical, 4)
+            }
+        }
+        .padding(18)
+        .frame(maxWidth: .infinity, alignment: .leading)
+        .glassBackdrop(cornerRadius: 26, tint: Palette.bone.opacity(0.06))
+    }
+
+    private var buttons: some View {
+        VStack(spacing: 10) {
+            Button {
+                save()
+            } label: {
+                Text("SAVE")
+                    .font(.system(size: 15, weight: .black))
+                    .tracking(2)
+                    .frame(maxWidth: .infinity)
+                    .frame(height: 56)
+                    .background(
+                        RoundedRectangle(cornerRadius: 24, style: .continuous)
+                            .fill(Palette.red)
+                    )
+                    .foregroundStyle(Palette.bone)
+            }
+            .buttonStyle(.plain)
+            .disabled(name.trimmingCharacters(in: .whitespaces).isEmpty)
+
+            if pantry.meals.contains(where: { $0.id == meal.id }) {
+                Button {
+                    haptics.commit()
+                    pantry.delete(meal)
+                    dismiss()
+                } label: {
+                    Text("delete this meal")
+                        .font(.system(size: 12, weight: .bold))
+                        .foregroundStyle(Palette.redHot.opacity(0.7))
+                        .frame(maxWidth: .infinity)
+                        .frame(height: 44)
+                }
+                .buttonStyle(.plain)
+            }
+        }
+    }
+
+    private func save() {
+        let trimmed = name.trimmingCharacters(in: .whitespaces)
+        guard !trimmed.isEmpty else { return }
+
+        var updated = meal
+        updated.name = trimmed
+        updated.portions = pantry.items.compactMap { item in
+            guard let text = amounts[item.id],
+                  let value = Double(text.replacingOccurrences(of: ",", with: ".")),
+                  value > 0
+            else { return nil }
+
+            // Keep the existing portion's identity where there is one, so
+            // editing an amount is an edit rather than a replacement.
+            let existing = meal.portions.first { $0.itemID == item.id }
+            return MealPortion(
+                id: existing?.id ?? UUID(), itemID: item.id, amount: value
+            )
+        }
+
+        pantry.upsert(updated)
+        haptics.commit()
+        dismiss()
     }
 }

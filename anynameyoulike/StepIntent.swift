@@ -116,6 +116,12 @@ struct WriteStepsIntent: AppIntent {
     }
 }
 
+/// The app gets exactly one of these, so everything Siri can say lives here.
+///
+/// Phrases are matched literally, so each wording is spelled out rather than
+/// hoping one generalises. Every phrase has to carry the app name; the
+/// display name is blank, so INAlternativeAppNames in Info.plist gives Siri
+/// "Kalla" and "Pantry" to hear.
 struct StepShortcuts: AppShortcutsProvider {
     static var appShortcuts: [AppShortcut] {
         AppShortcut(
@@ -129,6 +135,36 @@ struct StepShortcuts: AppShortcutsProvider {
             phrases: ["Add steps with \(.applicationName)"],
             shortTitle: "Add Steps",
             systemImageName: "plus"
+        )
+        AppShortcut(
+            intent: LogMealIntent(),
+            phrases: [
+                // The natural past tense, which is how a meal gets mentioned.
+                "Had \(\.$meal) with \(.applicationName)",
+                "Had my \(\.$meal) with \(.applicationName)",
+                "I had \(\.$meal) with \(.applicationName)",
+                "Ate \(\.$meal) with \(.applicationName)",
+                // The deliberate, app-ish phrasing.
+                "Log \(\.$meal) in \(.applicationName)",
+                "Log my \(\.$meal) in \(.applicationName)",
+                "Record \(\.$meal) in \(.applicationName)",
+                // Bare, for when the meal name carries it: "water in Kalla".
+                "\(\.$meal) in \(.applicationName)",
+            ],
+            shortTitle: "Log a meal",
+            systemImageName: "fork.knife"
+        )
+
+        AppShortcut(
+            intent: LogItemIntent(),
+            phrases: [
+                "Used \(\.$item) with \(.applicationName)",
+                "I used \(\.$item) with \(.applicationName)",
+                "Log \(\.$item) in \(.applicationName)",
+                "Take \(\.$item) off in \(.applicationName)",
+            ],
+            shortTitle: "Log an item",
+            systemImageName: "minus.circle"
         )
     }
 }

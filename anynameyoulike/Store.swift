@@ -52,11 +52,14 @@ nonisolated enum Store {
         /// follows whatever stop the dashboard last resolved.
         var transitHome = TransitSnapshot()
 
+        /// Named sets of portions, for logging a whole meal at once.
+        var meals: [Meal] = []
+
         init() {}
 
         enum CodingKeys: String, CodingKey {
             case version, savedAt, groceryItems, useLog, trashRota, stepLedger
-            case transit, transitHome
+            case transit, transitHome, meals
         }
 
         init(from decoder: Decoder) throws {
@@ -74,6 +77,7 @@ nonisolated enum Store {
             stepLedger = value(.stepLedger, [])
             transit = value(.transit, TransitSnapshot())
             transitHome = value(.transitHome, TransitSnapshot())
+            meals = value(.meals, [])
         }
     }
 
@@ -134,7 +138,14 @@ nonisolated enum Store {
         encoder.dateEncodingStrategy = .iso8601
 
         guard let data = try? encoder.encode(doc) else { return false }
-        return (try? data.write(to: url, options: .atomic)) != nil
+
+        // Siri logs a meal with the phone locked, so the document has to be
+        // readable then. This is the usual default, written down rather than
+        // assumed, since the whole feature rests on it.
+        return (try? data.write(
+            to: url,
+            options: [.atomic, .completeFileProtectionUntilFirstUserAuthentication]
+        )) != nil
     }
 
     private static func decoder() -> JSONDecoder {

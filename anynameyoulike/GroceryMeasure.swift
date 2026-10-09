@@ -80,21 +80,38 @@ nonisolated struct UseEntry: Identifiable, Codable {
 final class Pantry {
     var items: [GroceryItem] = []
     var log: [UseEntry] = []
+    var meals: [Meal] = []
 
     init() { reload() }
+
+    /// A pantry with nothing behind it.
+    ///
+    /// For tests: the test bundle runs inside the app, so a save here would
+    /// write over whatever the app itself is doing to the same document.
+    init(items: [GroceryItem], log: [UseEntry] = [], meals: [Meal] = []) {
+        self.items = items
+        self.log = log
+        self.meals = meals
+        self.detached = true
+    }
+
+    private var detached = false
 
     func reload() {
         let doc = Store.document
         items = doc.groceryItems
+        meals = doc.meals
 
         let cutoff = Calendar.current.date(byAdding: .day, value: -45, to: Date()) ?? Date()
         log = doc.useLog.filter { $0.date >= cutoff }
     }
 
     func save() {
+        guard !detached else { return }
         Store.mutate {
             $0.groceryItems = items
             $0.useLog = log
+            $0.meals = meals
         }
     }
 
@@ -195,6 +212,56 @@ final class Pantry {
         guard let i = index(of: item) else { return }
         items[i].lastOrdered = Date()
         save()
+    }
+
+    // MARK: Meals
+
+    func item(withID id: UUID) -> GroceryItem? {
+        items.first { $0.id == id }
+    }
+
+    func meal(named spoken: String) -> Meal? {
+        meals.first { $0.spokenName == spoken.lowercased() }
+    }
+
+    func upsert(_ meal: Meal) {
+        if let i = meals.firstIndex(where: { $0.id == meal.id }) {
+            meals[i] = meal
+        } else {
+            meals.append(meal)
+        }
+        save()
+    }
+
+    func delete(_ meal: Meal) {
+        meals.removeAll { $0.id == meal.id }
+        save()
+    }
+
+    /// Deducts every portion of a meal in one go.
+    ///
+    /// Each portion is logged against its own item, so the rate maths sees
+    /// exactly what it would have seen had each been entered by hand. An item
+    /// without enough left gives what it has and says how much was missing:
+    /// the log records what was actually there, not what was asked for.
+    @discardableResult
+    func log(_ meal: Meal) -> MealOutcome {
+        var outcome = MealOutcome(meal: meal.spokenName)
+
+        for portion in meal.portions {
+            guard let item = item(withID: portion.itemID) else { continue }
+            let result = take(item, amount: portion.amount)
+
+            outcome.lines.append(
+                MealOutcome.Line(
+                    name: item.name.lowercased(),
+                    taken: result.taken,
+                    short: result.short,
+                    unit: item.unit
+                )
+            )
+        }
+        return outcome
     }
 
     func upsert(_ item: GroceryItem) {

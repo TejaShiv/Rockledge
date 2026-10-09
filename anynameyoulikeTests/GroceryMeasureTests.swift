@@ -69,10 +69,8 @@ struct GroceryMeasureTests {
     // MARK: Taking an amount
 
     @Test func takesWhatWasAskedFor() {
-        let pantry = Pantry()
         let chicken = item(.portion, pack: 1000, left: 1000)
-        pantry.items = [chicken]
-        pantry.log = []
+        let pantry = Pantry(items: [chicken])
 
         let result = pantry.take(chicken, amount: 250)
 
@@ -85,10 +83,8 @@ struct GroceryMeasureTests {
 
     /// Asking for more than is there logs what was there, not what was asked.
     @Test func neverGoesNegative() {
-        let pantry = Pantry()
         let chicken = item(.portion, pack: 1000, left: 150)
-        pantry.items = [chicken]
-        pantry.log = []
+        let pantry = Pantry(items: [chicken])
 
         let result = pantry.take(chicken, amount: 250)
 
@@ -100,10 +96,8 @@ struct GroceryMeasureTests {
     }
 
     @Test func takingFromAnEmptyItemLogsNothing() {
-        let pantry = Pantry()
         let chicken = item(.portion, pack: 1000, left: 0)
-        pantry.items = [chicken]
-        pantry.log = []
+        let pantry = Pantry(items: [chicken])
 
         let result = pantry.take(chicken, amount: 250)
 
@@ -113,10 +107,8 @@ struct GroceryMeasureTests {
     }
 
     @Test func ignoresNothingAndNegatives() {
-        let pantry = Pantry()
         let chicken = item(.portion, pack: 1000, left: 500)
-        pantry.items = [chicken]
-        pantry.log = []
+        let pantry = Pantry(items: [chicken])
 
         #expect(pantry.take(chicken, amount: 0).taken == 0)
         #expect(pantry.take(chicken, amount: -50).taken == 0)
@@ -127,12 +119,9 @@ struct GroceryMeasureTests {
     /// Typing a number on a count item is the same deduction as tapping that
     /// many times, so the rate maths cannot tell them apart.
     @Test func typingOnACountItemMatchesTapping() {
-        let tapped = Pantry()
-        let typed = Pantry()
         let eggs = item(.count, pack: 12, left: 12)
-
-        tapped.items = [eggs]; tapped.log = []
-        typed.items = [eggs]; typed.log = []
+        let tapped = Pantry(items: [eggs])
+        let typed = Pantry(items: [eggs])
 
         for _ in 0..<3 { tapped.logUse(eggs, amount: 1) }
         typed.take(eggs, amount: 3)
