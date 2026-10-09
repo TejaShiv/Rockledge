@@ -25,7 +25,7 @@ struct ContentView: View {
     @State private var rota = TrashRota.load()
     @State private var showTrash = false
     @State private var showBackup = false
-    @State private var sharingOnOpen = false
+    @State private var sharingFile: ExportedFile?
 
     @Environment(\.accessibilityReduceMotion) private var reduceMotion
     @Environment(\.scenePhase) private var scenePhase
@@ -115,8 +115,11 @@ struct ContentView: View {
         .sheet(isPresented: $showTrash) {
             TrashSheet(rota: $rota, haptics: haptics)
         }
+        .sheet(item: $sharingFile) { file in
+            ShareSheet(url: file.url)
+        }
         .sheet(isPresented: $showBackup) {
-            BackupSheet(haptics: haptics, openSharing: sharingOnOpen) {
+            BackupSheet(haptics: haptics) {
                 // The document underneath has been swapped out.
                 rota = TrashRota.load()
                 pantry.reload()
@@ -200,12 +203,25 @@ struct ContentView: View {
         return f
     }()
 
-    /// A tap on the nightly reminder lands here: open the backup screen with
-    /// the share sheet already up.
+    /// A tap on the nightly reminder lands here, on the destination picker
+    /// itself rather than on the backup screen.
+    ///
+    /// Presented from here rather than from inside the backup sheet: a sheet
+    /// raised on top of a sheet that is still animating in gets dropped, and
+    /// the tap quietly did nothing.
+    ///
+    /// This is not a silent backup. iOS wants somewhere to put the file and
+    /// only the user can say where, so the tap gets as far as asking.
     private func landFromNotification() {
         guard Shared.router.take() == .export else { return }
-        sharingOnOpen = true
-        showBackup = true
+
+        if let file = try? Backup.exportFile() {
+            sharingFile = ExportedFile(url: file)
+        } else {
+            // Nothing to share, so fall back to the screen that explains it
+            // rather than doing nothing at all.
+            showBackup = true
+        }
     }
 
     private func refresh() async {
@@ -215,6 +231,13 @@ struct ContentView: View {
         // are and opening the app cannot trigger a location prompt.
         await transit.refreshHomeStop()
     }
+}
+
+/// A URL on its own cannot drive a sheet; this gives it the identity
+/// `sheet(item:)` needs.
+private struct ExportedFile: Identifiable {
+    let id = UUID()
+    let url: URL
 }
 
 #Preview {

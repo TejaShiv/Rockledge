@@ -3,8 +3,6 @@ import UniformTypeIdentifiers
 
 struct BackupSheet: View {
     let haptics: GrainHaptics
-    /// Opened from the nightly reminder: present the share sheet at once.
-    var openSharing = false
     /// Called after the document has actually been replaced, so the screens
     /// behind this one can re-read it.
     let onRestored: () -> Void
@@ -58,12 +56,6 @@ struct BackupSheet: View {
             // Prepared up front so the button is one tap, not two, and so a
             // tap on the reminder lands on the destination picker.
             exported = try? Backup.exportFile()
-
-            // With nothing to share this stays put: the screen itself is the
-            // fallback, rather than nothing happening at all.
-            if openSharing, exported != nil {
-                sharing = true
-            }
         }
         .fileImporter(
             isPresented: $picking,
@@ -304,7 +296,7 @@ struct BackupSheet: View {
 
 /// UIActivityViewController, so the share sheet can be opened in code as well
 /// as by a tap. ShareLink can only be a button.
-private struct ShareSheet: UIViewControllerRepresentable {
+struct ShareSheet: UIViewControllerRepresentable {
     let url: URL
 
     func makeUIViewController(context: Context) -> UIActivityViewController {
