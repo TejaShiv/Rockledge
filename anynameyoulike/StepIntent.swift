@@ -119,9 +119,8 @@ struct WriteStepsIntent: AppIntent {
 /// The app gets exactly one of these, so everything Siri can say lives here.
 ///
 /// Phrases are matched literally, so each wording is spelled out rather than
-/// hoping one generalises. Every phrase has to carry the app name; the
-/// display name is blank, so INAlternativeAppNames in Info.plist gives Siri
-/// "Kalla" and "Pantry" to hear.
+/// hoping one generalises. Every phrase carries ${applicationName}, which
+/// resolves at runtime to the display name — MOD.
 struct StepShortcuts: AppShortcutsProvider {
     static var appShortcuts: [AppShortcut] {
         AppShortcut(
@@ -148,7 +147,7 @@ struct StepShortcuts: AppShortcutsProvider {
                 "Log \(\.$meal) in \(.applicationName)",
                 "Log my \(\.$meal) in \(.applicationName)",
                 "Record \(\.$meal) in \(.applicationName)",
-                // Bare, for when the meal name carries it: "water in Kalla".
+                // Bare, for when the meal name carries it: "water in MOD".
                 "\(\.$meal) in \(.applicationName)",
             ],
             shortTitle: "Log a meal",

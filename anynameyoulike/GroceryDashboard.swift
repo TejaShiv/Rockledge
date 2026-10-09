@@ -133,7 +133,7 @@ struct GroceryDashboard: View {
             }
             .buttonStyle(.plain)
 
-            Text("say \"had lunch with Kalla\" to log one")
+            Text("say \"had lunch with MOD\" to log one")
                 .font(.system(size: 10, weight: .medium))
                 .foregroundStyle(Palette.bone.opacity(0.28))
         }
