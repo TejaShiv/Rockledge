@@ -415,7 +415,7 @@
 				ENABLE_PREVIEWS = YES;
 				GENERATE_INFOPLIST_FILE = YES;
 				INFOPLIST_FILE = anynameyoulike/Info.plist;
-				INFOPLIST_KEY_CFBundleDisplayName = MOD;
+				INFOPLIST_KEY_CFBundleDisplayName = Tally;
 				INFOPLIST_KEY_NSBluetoothAlwaysUsageDescription = "Scans for fitness bands";
 				INFOPLIST_KEY_NSHealthShareUsageDescription = "Used to log step data.";
 				INFOPLIST_KEY_NSHealthUpdateUsageDescription = "Used to log step data.";
@@ -453,7 +453,7 @@
 				ENABLE_PREVIEWS = YES;
 				GENERATE_INFOPLIST_FILE = YES;
 				INFOPLIST_FILE = anynameyoulike/Info.plist;
-				INFOPLIST_KEY_CFBundleDisplayName = MOD;
+				INFOPLIST_KEY_CFBundleDisplayName = Tally;
 				INFOPLIST_KEY_NSBluetoothAlwaysUsageDescription = "Scans for fitness bands";
 				INFOPLIST_KEY_NSHealthShareUsageDescription = "Used to log step data.";
 				INFOPLIST_KEY_NSHealthUpdateUsageDescription = "Used to log step data.";

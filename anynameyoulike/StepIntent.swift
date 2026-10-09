@@ -120,7 +120,7 @@ struct WriteStepsIntent: AppIntent {
 ///
 /// Phrases are matched literally, so each wording is spelled out rather than
 /// hoping one generalises. Every phrase carries ${applicationName}, which
-/// resolves at runtime to the display name — MOD.
+/// resolves at runtime to the display name — Tally.
 struct StepShortcuts: AppShortcutsProvider {
     static var appShortcuts: [AppShortcut] {
         AppShortcut(
@@ -138,16 +138,20 @@ struct StepShortcuts: AppShortcutsProvider {
         AppShortcut(
             intent: LogMealIntent(),
             phrases: [
-                // The natural past tense, which is how a meal gets mentioned.
-                "Had \(\.$meal) with \(.applicationName)",
-                "Had my \(\.$meal) with \(.applicationName)",
-                "I had \(\.$meal) with \(.applicationName)",
-                "Ate \(\.$meal) with \(.applicationName)",
-                // The deliberate, app-ish phrasing.
+                // Imperative first. A verb at the front marks the utterance
+                // as a command; narration gets read as a sentence about the
+                // day and matched against something else.
                 "Log \(\.$meal) in \(.applicationName)",
                 "Log my \(\.$meal) in \(.applicationName)",
                 "Record \(\.$meal) in \(.applicationName)",
-                // Bare, for when the meal name carries it: "water in MOD".
+                "Add \(\.$meal) to \(.applicationName)",
+                // Narration, kept as fallbacks. "in" rather than "with":
+                // Tally is a plausible name for a person, and "had lunch
+                // with Tally" is a sentence about company, not an app.
+                "Had \(\.$meal) in \(.applicationName)",
+                "Had my \(\.$meal) in \(.applicationName)",
+                "I had \(\.$meal) in \(.applicationName)",
+                // Bare, for when the meal name carries it: "water in Tally".
                 "\(\.$meal) in \(.applicationName)",
             ],
             shortTitle: "Log a meal",
@@ -157,10 +161,13 @@ struct StepShortcuts: AppShortcutsProvider {
         AppShortcut(
             intent: LogItemIntent(),
             phrases: [
-                "Used \(\.$item) with \(.applicationName)",
-                "I used \(\.$item) with \(.applicationName)",
-                "Log \(\.$item) in \(.applicationName)",
+                // Imperative first, as above.
                 "Take \(\.$item) off in \(.applicationName)",
+                // "Log" belongs to meals now: registering it here too made
+                // one phrase match two intents, and an item and a meal can
+                // easily share a name.
+                "Used \(\.$item) in \(.applicationName)",
+                "I used \(\.$item) in \(.applicationName)",
             ],
             shortTitle: "Log an item",
             systemImageName: "minus.circle"
