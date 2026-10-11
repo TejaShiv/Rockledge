@@ -57,6 +57,73 @@ nonisolated struct TrashRota: Codable {
         anchorIndex = value(.anchorIndex, 0)
     }
 
+    // MARK: Which week is in play
+
+    /// The next collection day, Monday or Thursday, counting today.
+    ///
+    /// Bins go out the night before, so the day of a collection still counts
+    /// as that collection: it is only once Thursday is over that the next one
+    /// is Monday.
+    static func nextCollection(after date: Date = Date()) -> Date {
+        let cal = gregorian
+        let today = cal.startOfDay(for: date)
+
+        for offset in 0...7 {
+            guard let day = cal.date(byAdding: .day, value: offset, to: today) else { continue }
+            let weekday = cal.component(.weekday, from: day)
+            if weekday == 2 || weekday == 5 { return day }      // Monday, Thursday
+        }
+        return today
+    }
+
+    /// The week the next collection falls in.
+    ///
+    /// From Friday that is the week ahead, because both of this week's
+    /// collections have gone. The card is read when someone is deciding
+    /// whether to put the bins out, so it has to name whoever that lot
+    /// belongs to rather than whoever the calendar week belongs to.
+    func activeWeek(at date: Date = Date()) -> Int {
+        weekIndex(of: Self.nextCollection(after: date))
+    }
+
+    /// Whose bins are next out.
+    func activePerson(at date: Date = Date()) -> String {
+        person(weeksAhead: activeWeek(at: date) - weekIndex(of: date))
+    }
+
+    func isMyActiveWeek(at date: Date = Date()) -> Bool {
+        guard people.indices.contains(me) else { return false }
+        return activePerson(at: date) == people[me]
+    }
+
+    /// "this week" or "next week", so rolling forward does not read as the
+    /// rota having skipped someone.
+    func activeWeekLabel(at date: Date = Date()) -> String {
+        activeWeek(at: date) == weekIndex(of: date) ? "this week" : "next week"
+    }
+
+    /// "mon 13", the day those bins actually go.
+    func nextCollectionText(at date: Date = Date()) -> String {
+        Self.collectionDay.string(from: Self.nextCollection(after: date)).lowercased()
+    }
+
+    private static let collectionDay: DateFormatter = {
+        let f = DateFormatter()
+        f.dateFormat = "EEE d"
+        return f
+    }()
+
+    /// What Siri says, so the spoken answer and the screen cannot disagree.
+    func spokenTurn(at date: Date = Date()) -> String {
+        guard !people.isEmpty else { return "There is nobody in the rota yet." }
+
+        let when = activeWeekLabel(at: date)
+        guard !isMyActiveWeek(at: date) else {
+            return "The bins are yours \(when)."
+        }
+        return "\(when.prefix(1).uppercased() + when.dropFirst()) is \(activePerson(at: date))'s."
+    }
+
     // MARK: The rotation
 
     var currentWeek: Int { weekIndex(of: Date()) }
@@ -250,17 +317,20 @@ struct TrashBar: View {
                 Image(systemName: "trash.fill")
                     .font(.system(size: 11, weight: .black))
                     .foregroundStyle(
-                        rota.isMyWeek ? Palette.redHot.opacity(0.9) : Palette.bone.opacity(0.35)
+                        rota.isMyActiveWeek()
+                            ? Palette.redHot.opacity(0.9) : Palette.bone.opacity(0.35)
                     )
 
-                Text(rota.isMyWeek ? "your week" : rota.thisWeek.lowercased())
+                Text(rota.isMyActiveWeek() ? "your week" : rota.activePerson().lowercased())
                     .font(.system(size: 11, weight: .black))
                     .tracking(1.4)
                     .foregroundStyle(Palette.bone.opacity(0.75))
 
                 Spacer()
 
-                Text("mon · thu")
+                // Which week, and the day those bins go. Without the label a
+                // roll forward on Friday reads as the rota skipping someone.
+                Text("\(rota.activeWeekLabel()) · \(rota.nextCollectionText())")
                     .font(.system(size: 9, weight: .black))
                     .tracking(1.2)
                     .foregroundStyle(Palette.bone.opacity(0.28))
@@ -276,7 +346,7 @@ struct TrashBar: View {
                     .fill(Palette.steel)
                     .overlay(
                         Capsule().strokeBorder(
-                            Palette.red.opacity(rota.isMyWeek ? 0.5 : 0.18),
+                            Palette.red.opacity(rota.isMyActiveWeek() ? 0.5 : 0.18),
                             lineWidth: 1
                         )
                     )
@@ -330,13 +400,13 @@ struct TrashSheet: View {
 
     private var weekPanel: some View {
         VStack(spacing: 14) {
-            Text(rota.thisWeek)
+            Text(rota.activePerson())
                 .font(.system(size: 42, weight: .heavy).width(.expanded))
                 .minimumScaleFactor(0.4)
                 .lineLimit(1)
                 .foregroundStyle(Palette.bone)
 
-            Text("this week")
+            Text("\(rota.activeWeekLabel()) · bins out \(rota.nextCollectionText())")
                 .font(.system(size: 9, weight: .black))
                 .tracking(1.6)
                 .foregroundStyle(Palette.bone.opacity(0.3))

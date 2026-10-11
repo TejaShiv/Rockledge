@@ -259,4 +259,104 @@ struct TrashRotaTests {
         #expect(back.nextWeek == "Dheeraj")
         #expect(back.people[back.me] == "Me")
     }
+
+    // MARK: Which week the card is showing
+
+    /// A date at a known weekday, so the roll can be checked day by day.
+    private func day(_ weekday: Int) -> Date {
+        var cal = Calendar(identifier: .gregorian)
+        cal.firstWeekday = 2
+        let monday = TrashRota.mondayOf(Date())
+        // weekday: 2 = Monday ... 1 = Sunday, which is six days on.
+        let offset = weekday == 1 ? 6 : weekday - 2
+        return cal.date(byAdding: .day, value: offset, to: monday)!
+    }
+
+    @Test func theNextCollectionIsTodayOnACollectionDay() {
+        let monday = day(2), thursday = day(5)
+
+        #expect(TrashRota.nextCollection(after: monday) == monday)
+        #expect(TrashRota.nextCollection(after: thursday) == thursday)
+    }
+
+    @Test func theNextCollectionIsThursdayMidweek() {
+        #expect(TrashRota.nextCollection(after: day(3)) == day(5))   // Tue
+        #expect(TrashRota.nextCollection(after: day(4)) == day(5))   // Wed
+    }
+
+    /// Once Thursday is done the next lot is Monday's, which is next week's.
+    @Test func theNextCollectionRollsToMondayFromFriday() {
+        let nextMonday = Calendar(identifier: .gregorian)
+            .date(byAdding: .day, value: 7, to: day(2))!
+
+        #expect(TrashRota.nextCollection(after: day(6)) == nextMonday)   // Fri
+        #expect(TrashRota.nextCollection(after: day(7)) == nextMonday)   // Sat
+        #expect(TrashRota.nextCollection(after: day(1)) == nextMonday)   // Sun
+    }
+
+    /// The complaint: on Sunday evening the card named the week that was
+    /// ending, while the bins going out that night were the next person's.
+    @Test func theCardNamesWhoseBinsAreNext() {
+        var r = rota(["Dheeraj", "Agilan", "Me"])
+        r.setPerson("Me", weeksAhead: 0)
+
+        // Midweek it is still this week's person.
+        #expect(r.activePerson(at: day(3)) == "Me")
+        #expect(r.activeWeekLabel(at: day(3)) == "this week")
+
+        // From Friday it is whoever has the Monday coming.
+        #expect(r.activePerson(at: day(6)) == "Dheeraj")
+        #expect(r.activePerson(at: day(1)) == "Dheeraj")      // Sunday
+        #expect(r.activeWeekLabel(at: day(1)) == "next week")
+    }
+
+    /// The roll must not reorder anything: it only changes which week is read.
+    @Test func rollingForwardDoesNotChangeTheRotation() {
+        var r = rota(["Dheeraj", "Agilan", "Me"])
+        r.setPerson("Me", weeksAhead: 0)
+        let order = cycle(r)
+
+        _ = r.activePerson(at: day(1))
+
+        #expect(cycle(r) == order)
+        #expect(r.thisWeek == "Me")          // the pickers still read the calendar
+        #expect(r.nextWeek == "Dheeraj")
+    }
+
+    @Test func theLabelSaysWhichWeekSoARollIsNotASkip() {
+        var r = rota(["A", "B"])
+        r.setPerson("A", weeksAhead: 0)
+
+        #expect(r.activeWeekLabel(at: day(2)) == "this week")
+        #expect(r.activeWeekLabel(at: day(5)) == "this week")
+        #expect(r.activeWeekLabel(at: day(6)) == "next week")
+    }
+
+    // MARK: What Siri says
+
+    @Test func speaksTheWeekTheCardIsShowing() {
+        var r = rota(["Dheeraj", "Agilan", "Me"])
+        r.setPerson("Agilan", weeksAhead: 0)
+        r.me = r.people.firstIndex(of: "Me")!
+
+        #expect(r.spokenTurn(at: day(3)) == "This week is Agilan's.")
+        #expect(r.spokenTurn(at: day(1)).hasPrefix("Next week is"))
+        // Whatever it says, it names the person the card names.
+        #expect(r.spokenTurn(at: day(1)).contains(r.activePerson(at: day(1))))
+    }
+
+    @Test func speaksInTheSecondPersonWhenItIsYours() {
+        var r = rota(["A", "Me"])
+        r.setPerson("Me", weeksAhead: 0)
+        r.me = r.people.firstIndex(of: "Me")!
+
+        #expect(r.spokenTurn(at: day(3)) == "The bins are yours this week.")
+    }
+
+    @Test func saysSoWhenNobodyIsInTheRota() {
+        var r = TrashRota()
+        r.people = []
+
+        #expect(r.spokenTurn().contains("nobody"))
+    }
 }

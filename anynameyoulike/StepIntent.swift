@@ -151,6 +151,11 @@ struct StepShortcuts: AppShortcutsProvider {
                 "Had \(\.$meal) in \(.applicationName)",
                 "Had my \(\.$meal) in \(.applicationName)",
                 "I had \(\.$meal) in \(.applicationName)",
+                // No meal named, so the parameter goes unresolved and Siri
+                // asks which one — the picker, reachable without having to
+                // remember a name.
+                "Log items in \(.applicationName)",
+                "Log a meal in \(.applicationName)",
             ],
             shortTitle: "Log a meal",
             systemImageName: "fork.knife"
@@ -172,6 +177,21 @@ struct StepShortcuts: AppShortcutsProvider {
             ],
             shortTitle: "Log an item",
             systemImageName: "minus.circle"
+        )
+
+        AppShortcut(
+            intent: WhoseTurnIntent(),
+            phrases: [
+                // Verb first, as everywhere else: those are the ones that
+                // match. The bare question is kept behind them.
+                "Check whose turn it is in \(.applicationName)",
+                "Check the bins in \(.applicationName)",
+                "Check the bin rota in \(.applicationName)",
+                "Whose turn is it in \(.applicationName)",
+                "Whose bin week is it in \(.applicationName)",
+            ],
+            shortTitle: "Whose turn",
+            systemImageName: "trash"
         )
     }
 }
