@@ -1,6 +1,25 @@
+# Personal data — never commit
+kalla.json
+kalla-*.json
+*.json.backup
+Exports/
+
 # Xcode
-*.xcuserstate
 xcuserdata/
+*.xcuserstate
+*.xcscmblueprint
 DerivedData/
 build/
+*.ipa
+*.dSYM
+*.dSYM.zip
+*.hmap
+*.moved-aside
+
+# SPM
+.build/
+.swiftpm/
+Packages/
+
+# macOS
 .DS_Store
