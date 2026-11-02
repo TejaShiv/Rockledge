@@ -15,6 +15,21 @@ struct TransitDashboard: View {
     @State private var showMap = false
     @State private var camera: MapCameraPosition = .automatic
 
+    /// The map taking over the screen. The list, the header and the toggles
+    /// go with it.
+    @State private var fullscreen = false
+    /// What the map is actually looking at, so the two sizes can hand it
+    /// over instead of snapping back to the stop.
+    @State private var region: MKCoordinateRegion?
+
+    /// A pin tapped for a look, which is not the same as choosing the stop:
+    /// choosing one reloads the whole screen, and peeking at a pin should
+    /// not throw away what you were reading.
+    @State private var peek: TransitStop?
+    @State private var peekArrivals: [TransitArrival] = []
+    @State private var peekLoading = false
+    @State private var peekTask: Task<Void, Never>?
+
     var body: some View {
         ZStack {
             LinearGradient(
@@ -47,6 +62,14 @@ struct TransitDashboard: View {
                     await transit.locate()
                 }
             }
+            .opacity(fullscreen ? 0 : 1)
+
+            if fullscreen {
+                mapSurface(expanded: true)
+                    .ignoresSafeArea()
+                    .transition(.opacity.combined(with: .scale(scale: 0.97)))
+                    .zIndex(1)
+            }
         }
         .fontDesign(.rounded)
         .preferredColorScheme(.dark)
@@ -65,6 +88,7 @@ struct TransitDashboard: View {
         .onDisappear {
             // Nothing polls behind the user's back.
             transit.stopPolling()
+            peekTask?.cancel()
         }
         .onChange(of: scenePhase) { _, phase in
             if phase == .active { transit.startPolling() } else { transit.stopPolling() }
@@ -137,7 +161,13 @@ struct TransitDashboard: View {
             }
 
             if showMap {
-                stopMap
+                if fullscreen {
+                    // Holds the space so coming back out does not make the
+                    // panel jump.
+                    Color.clear.frame(height: Self.mapHeight)
+                } else {
+                    stopMap
+                }
             } else {
                 stopList
             }
@@ -266,64 +296,316 @@ struct TransitDashboard: View {
         return away < 1000 ? "\(Int(away))m" : String(format: "%.1fkm", away / 1000)
     }
 
-    private var stopMap: some View {
-        Map(position: $camera) {
-            UserAnnotation()
+    static let mapHeight: CGFloat = 300
 
-            ForEach(transit.nearbyStops) { stop in
-                Annotation("", coordinate: CLLocationCoordinate2D(
-                    latitude: stop.latitude, longitude: stop.longitude
-                )) {
+    private var stopMap: some View {
+        mapSurface(expanded: false)
+            .frame(height: Self.mapHeight)
+            .clipShape(RoundedRectangle(cornerRadius: 20, style: .continuous))
+    }
+
+    /// The map at whichever size it is currently being shown.
+    ///
+    /// Only ever built once: in the panel, or filling the screen, never
+    /// both. A second MKMapView left alive behind the first would keep
+    /// drawing every pin update off screen for nothing.
+    private func mapSurface(expanded: Bool) -> some View {
+        ZStack(alignment: .bottom) {
+            Map(position: $camera) {
+                UserAnnotation()
+
+                ForEach(transit.nearbyStops) { stop in
+                    Annotation("", coordinate: CLLocationCoordinate2D(
+                        latitude: stop.latitude, longitude: stop.longitude
+                    )) {
+                        Button {
+                            haptics.soft()
+                            openPeek(stop)
+                        } label: {
+                            stopPin(
+                                selected: stop.id == transit.stop?.id,
+                                peeked: stop.id == peek?.id
+                            )
+                        }
+                        .buttonStyle(.plain)
+                    }
+                }
+
+                ForEach(transit.vehicles) { bus in
+                    Annotation("", coordinate: CLLocationCoordinate2D(
+                        latitude: bus.latitude, longitude: bus.longitude
+                    )) {
+                        busPin(bus)
+                    }
+                }
+            }
+            .mapStyle(.standard(pointsOfInterest: .excluding(.publicTransport)))
+            .mapControls {
+                MapUserLocationButton()
+                MapCompass()
+            }
+            // Keeps the system controls out from under the size button,
+            // which sits in the same corner they default to. Fullscreen the
+            // button is pushed clear of the notch as well, so the controls
+            // have to come down by the same amount.
+            .safeAreaPadding(.top, 46 + (expanded ? insets.top : 0))
+            // Remembered rather than read back later: a map that has been
+            // panned must open at the same place in the other size.
+            .onMapCameraChange(frequency: .onEnd) { context in
+                region = context.region
+            }
+
+            if peek != nil {
+                // Everything the panel does not cover dismisses it.
+                Rectangle()
+                    .fill(.clear)
+                    .contentShape(Rectangle())
+                    .onTapGesture { closePeek() }
+            }
+
+            if let stop = peek {
+                peekPanel(for: stop, expanded: expanded)
+                    .transition(.move(edge: .bottom).combined(with: .opacity))
+            }
+        }
+        .overlay(alignment: .topTrailing) { sizeToggle(expanded: expanded) }
+        .overlay(alignment: .bottomLeading) { cadence(expanded: expanded) }
+    }
+
+    private func sizeToggle(expanded: Bool) -> some View {
+        Button {
+            haptics.soft()
+            holdCamera()
+            withAnimation(.easeInOut(duration: 0.3)) { fullscreen.toggle() }
+        } label: {
+            Image(systemName: expanded
+                  ? "arrow.down.right.and.arrow.up.left"
+                  : "arrow.up.left.and.arrow.down.right")
+                .font(.system(size: 13, weight: .black))
+                .frame(width: 34, height: 34)
+                .foregroundStyle(Palette.bone.opacity(0.85))
+                .background(
+                    RoundedRectangle(cornerRadius: 11, style: .continuous)
+                        .fill(Palette.ink.opacity(0.72))
+                )
+        }
+        .buttonStyle(.plain)
+        .padding(10)
+        .padding(.top, expanded ? insets.top : 0)
+    }
+
+    /// Hands the view across before the other size is built, so the map
+    /// opens where it was left rather than back at the stop. Not a recenter:
+    /// the camera still only moves to a stop when a stop is deliberately
+    /// chosen.
+    ///
+    /// Only the centre and the width are carried over. Handing over the whole
+    /// region instead makes the map visibly zoom out on the way back, because
+    /// the tall fullscreen region has to be squeezed into a 300pt box to
+    /// still fit. Holding the longitude span keeps the scale steady and lets
+    /// the extra height simply reveal more.
+    private func holdCamera() {
+        guard let region else { return }
+        camera = .region(
+            MKCoordinateRegion(
+                center: region.center,
+                span: MKCoordinateSpan(
+                    latitudeDelta: 0.0001,
+                    longitudeDelta: region.span.longitudeDelta
+                )
+            )
+        )
+    }
+
+    @ViewBuilder
+    private func cadence(expanded: Bool) -> some View {
+        // Hidden under the panel, where it would only be in the way.
+        if !transit.servingRoutes.isEmpty, peek == nil {
+            // Just the cadence: the routes are named under the map, and
+            // spelling them out again here spanned the whole width and sat
+            // on top of the bus pins.
+            Text("every 12s")
+                .font(.system(size: 9, weight: .black))
+                .tracking(1)
+                .foregroundStyle(Palette.bone.opacity(0.75))
+                .padding(.horizontal, 8)
+                .padding(.vertical, 4)
+                .background(Capsule().fill(Palette.ink.opacity(0.8)))
+                .padding(10)
+                .padding(.bottom, expanded ? insets.bottom : 0)
+        }
+    }
+
+    /// A view that ignores the safe area cannot read it back, and the
+    /// fullscreen map runs under the notch and the home indicator on
+    /// purpose. The window still knows.
+    private var insets: UIEdgeInsets {
+        UIApplication.shared.connectedScenes
+            .compactMap { $0 as? UIWindowScene }
+            .first { $0.activationState == .foregroundActive }?
+            .keyWindow?.safeAreaInsets ?? .zero
+    }
+
+    // MARK: A stop you tapped
+
+    private func openPeek(_ stop: TransitStop) {
+        peekTask?.cancel()
+        peekArrivals = []
+        withAnimation(.easeOut(duration: 0.22)) { peek = stop }
+
+        peekTask = Task {
+            peekLoading = true
+            defer { peekLoading = false }
+
+            // Asked for separately rather than taken from the engine: the
+            // engine holds the chosen stop's predictions, and peeking must
+            // not overwrite them.
+            let found = (try? await MBTA.arrivals(at: stop.queryIDs)) ?? []
+            guard !Task.isCancelled else { return }
+            peekArrivals = found
+        }
+    }
+
+    private func closePeek() {
+        peekTask?.cancel()
+        peekTask = nil
+        peekArrivals = []
+        withAnimation(.easeIn(duration: 0.18)) { peek = nil }
+    }
+
+    private func peekPanel(for stop: TransitStop, expanded: Bool) -> some View {
+        // Grouped by headsign through the engine's own function, so this
+        // reads exactly like the list below the map.
+        let groups = Transit.grouped(peekArrivals)
+
+        return VStack(alignment: .leading, spacing: 0) {
+            HStack(alignment: .top, spacing: 8) {
+                VStack(alignment: .leading, spacing: 2) {
+                    Text(stop.name)
+                        .font(.system(size: 15, weight: .heavy))
+                        .lineLimit(2)
+                        .multilineTextAlignment(.leading)
+                        .foregroundStyle(Palette.bone)
+
+                    if stop.isPaired {
+                        Text("both sides")
+                            .font(.system(size: 8, weight: .black))
+                            .tracking(1)
+                            .foregroundStyle(Palette.bone.opacity(0.45))
+                    }
+                }
+
+                Spacer(minLength: 4)
+
+                if stop.id != transit.stop?.id {
                     Button {
                         haptics.soft()
+                        closePeek()
                         Task {
                             await transit.select(stop)
                             recenter()
                         }
                     } label: {
-                        stopPin(selected: stop.id == transit.stop?.id)
+                        Text("show")
+                            .font(.system(size: 9, weight: .black))
+                            .tracking(1.2)
+                            .foregroundStyle(Palette.bone.opacity(0.9))
+                            .padding(.horizontal, 10)
+                            .padding(.vertical, 6)
+                            .background(Capsule().fill(Palette.red.opacity(0.75)))
                     }
                     .buttonStyle(.plain)
                 }
-            }
 
-            ForEach(transit.vehicles) { bus in
-                Annotation("", coordinate: CLLocationCoordinate2D(
-                    latitude: bus.latitude, longitude: bus.longitude
-                )) {
-                    busPin(bus)
+                Button {
+                    haptics.soft()
+                    closePeek()
+                } label: {
+                    Image(systemName: "xmark")
+                        .font(.system(size: 10, weight: .black))
+                        .frame(width: 26, height: 26)
+                        .foregroundStyle(Palette.bone.opacity(0.6))
+                        .background(Circle().fill(Palette.steel.opacity(0.85)))
                 }
+                .buttonStyle(.plain)
+            }
+            .padding(.bottom, 10)
+
+            if peekLoading, peekArrivals.isEmpty {
+                ProgressView()
+                    .controlSize(.small)
+                    .tint(Palette.bone.opacity(0.4))
+                    .frame(maxWidth: .infinity)
+                    .padding(.vertical, 14)
+            } else if groups.isEmpty {
+                Text("nothing predicted here right now")
+                    .font(.system(size: 13, weight: .bold))
+                    .foregroundStyle(Palette.bone.opacity(0.45))
+                    .padding(.vertical, 8)
+            } else {
+                ScrollView {
+                    VStack(alignment: .leading, spacing: 14) {
+                        ForEach(groups, id: \.destination) { group in
+                            VStack(alignment: .leading, spacing: 4) {
+                                HStack(spacing: 6) {
+                                    Image(systemName: "arrow.right")
+                                        .font(.system(size: 9, weight: .black))
+                                        .foregroundStyle(Palette.redHot.opacity(0.6))
+
+                                    Text("towards \(group.destination.lowercased())")
+                                        .font(.system(size: 9, weight: .black))
+                                        .tracking(1.4)
+                                        .foregroundStyle(Palette.bone.opacity(0.4))
+                                }
+
+                                if group.arrivals.isEmpty {
+                                    Text("nothing predicted this way")
+                                        .font(.system(size: 12, weight: .bold))
+                                        .foregroundStyle(Palette.bone.opacity(0.35))
+                                } else {
+                                    // Two each way: enough to know whether to
+                                    // run for this one.
+                                    ForEach(Array(group.arrivals.prefix(2))) { arrival in
+                                        arrivalRow(arrival)
+                                    }
+                                }
+                            }
+                        }
+                    }
+                }
+                .frame(maxHeight: expanded ? 320 : 168)
+                .scrollBounceBehavior(.basedOnSize)
             }
         }
-        .mapStyle(.standard(pointsOfInterest: .excluding(.publicTransport)))
-        .mapControls {
-            MapUserLocationButton()
-            MapCompass()
-        }
-        .frame(height: 300)
-        .clipShape(RoundedRectangle(cornerRadius: 20, style: .continuous))
-        .overlay(alignment: .bottomLeading) {
-            if !transit.servingRoutes.isEmpty {
-                // Just the cadence: the routes are named under the map, and
-                // spelling them out again here spanned the whole width and
-                // sat on top of the bus pins.
-                Text("every 12s")
-                    .font(.system(size: 9, weight: .black))
-                    .tracking(1)
-                    .foregroundStyle(Palette.bone.opacity(0.75))
-                    .padding(.horizontal, 8)
-                    .padding(.vertical, 4)
-                    .background(Capsule().fill(Palette.ink.opacity(0.8)))
-                    .padding(10)
-            }
-        }
+        .padding(.horizontal, 16)
+        .padding(.top, 14)
+        .padding(.bottom, 14 + (expanded ? insets.bottom : 0))
+        .frame(maxWidth: .infinity, alignment: .leading)
+        // Translucent on purpose: the pin you tapped stays visible behind it.
+        .background(.ultraThinMaterial)
+        .clipShape(
+            UnevenRoundedRectangle(
+                topLeadingRadius: 18, bottomLeadingRadius: 0,
+                bottomTrailingRadius: 0, topTrailingRadius: 18,
+                style: .continuous
+            )
+        )
     }
 
-    private func stopPin(selected: Bool) -> some View {
+    private func stopPin(selected: Bool, peeked: Bool) -> some View {
         Image(systemName: selected ? "largecircle.fill.circle" : "circle.fill")
             .font(.system(size: selected ? 20 : 11, weight: .black))
             .foregroundStyle(selected ? Palette.redHot : Palette.bone.opacity(0.75))
             .shadow(color: .black.opacity(0.6), radius: 2)
+            .overlay {
+                // A ring, so the pin being read about is obvious without
+                // pretending it is the chosen stop.
+                if peeked {
+                    Circle()
+                        .strokeBorder(Palette.bone.opacity(0.9), lineWidth: 2)
+                        .frame(width: selected ? 30 : 21, height: selected ? 30 : 21)
+                }
+            }
     }
 
     /// Route number, and how many stops short of you it is when the bus can

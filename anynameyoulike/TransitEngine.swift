@@ -262,7 +262,17 @@ final class Transit {
     /// headed with the first arrival's destination would misdescribe the
     /// rest. The headsign is the one thing that means the same for everyone.
     var byDestination: [(destination: String, arrivals: [TransitArrival])] {
-        Dictionary(grouping: upcoming, by: \.headsign)
+        Self.grouped(arrivals)
+    }
+
+    /// The same grouping, for predictions that are not this screen's stop —
+    /// the map's stop panel asks about whichever pin was tapped, and the two
+    /// must read identically.
+    nonisolated static func grouped(
+        _ arrivals: [TransitArrival],
+        now: Date = Date()
+    ) -> [(destination: String, arrivals: [TransitArrival])] {
+        Dictionary(grouping: arrivals.filter { $0.time > now }, by: \.headsign)
             .map { (destination: $0.key, arrivals: $0.value.sorted { $0.time < $1.time }) }
             .sorted { lhs, rhs in
                 (lhs.arrivals.first?.time ?? .distantFuture)
