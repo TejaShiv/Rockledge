@@ -33,91 +33,107 @@ struct ContentView: View {
 
     var body: some View {
         NavigationStack {
-            VStack(spacing: 14) {
-                SigningStrip()
-                    .padding(.top, 6)
+            // Scrollable because the cards no longer fit. Four of them plus
+            // the strip, the trash bar and the signature come to more than a
+            // phone is tall, and a VStack that cannot fit its children
+            // overflows both ends at once — which is what pushed the top row
+            // up under the status bar. The minHeight keeps the old look
+            // wherever it does fit: the signature stays pinned to the bottom
+            // and nothing scrolls.
+            GeometryReader { proxy in
+                ScrollView {
+                    VStack(spacing: 14) {
+                        SigningStrip()
+                            .padding(.top, 6)
 
-                TrashBar(rota: rota) {
-                    haptics.soft()
-                    showTrash = true
-                }
+                        TrashBar(rota: rota) {
+                            haptics.soft()
+                            showTrash = true
+                        }
 
-                NavigationLink {
-                    HealthDashboard()
-                } label: {
-                    DoorCard(
-                        icon: "heart.text.square.fill",
-                        title: "health",
-                        value: steps.map { $0.formatted(.number) } ?? "—",
-                        caption: "steps today",
-                        tint: Palette.redHot.opacity(0.75)
-                    )
-                }
-                .buttonStyle(.plain)
-                .simultaneousGesture(TapGesture().onEnded { haptics.soft() })
+                        NavigationLink {
+                            HealthDashboard()
+                        } label: {
+                            DoorCard(
+                                icon: "heart.text.square.fill",
+                                title: "health",
+                                value: steps.map { $0.formatted(.number) } ?? "—",
+                                caption: "steps today",
+                                tint: Palette.redHot.opacity(0.75)
+                            )
+                        }
+                        .buttonStyle(.plain)
+                        .simultaneousGesture(TapGesture().onEnded { haptics.soft() })
 
-                NavigationLink {
-                    GroceryDashboard()
-                } label: {
-                    GroceryDoorCard(
-                        lines: stockLines,
-                        emptyMessage: "nothing tracked yet"
-                    )
-                }
-                .buttonStyle(.plain)
-                .simultaneousGesture(TapGesture().onEnded { haptics.soft() })
+                        NavigationLink {
+                            GroceryDashboard()
+                        } label: {
+                            GroceryDoorCard(
+                                lines: stockLines,
+                                emptyMessage: "nothing tracked yet"
+                            )
+                        }
+                        .buttonStyle(.plain)
+                        .simultaneousGesture(TapGesture().onEnded { haptics.soft() })
 
-                NavigationLink {
-                    TransitDashboard()
-                } label: {
-                    TransitDoorCard(
-                        lines: transitLines,
-                        emptyMessage: "no buses to ruggles right now",
-                        staleNote: transitStaleNote
-                    )
-                }
-                .buttonStyle(.plain)
-                .simultaneousGesture(TapGesture().onEnded { haptics.soft() })
+                        NavigationLink {
+                            TransitDashboard()
+                        } label: {
+                            TransitDoorCard(
+                                lines: transitLines,
+                                emptyMessage: "no buses to ruggles right now",
+                                staleNote: transitStaleNote
+                            )
+                        }
+                        .buttonStyle(.plain)
+                        .simultaneousGesture(TapGesture().onEnded { haptics.soft() })
 
-                NavigationLink {
-                    CanvasDashboard()
-                } label: {
-                    CanvasDoorCard(
-                        subject: canvasSubject,
-                        next: canvas.snapshot.next,
-                        dueThisWeek: canvas.snapshot.dueThisWeek(),
-                        problem: canvasProblem
-                    )
-                }
-                .buttonStyle(.plain)
-                .simultaneousGesture(TapGesture().onEnded { haptics.soft() })
+                        NavigationLink {
+                            CanvasDashboard()
+                        } label: {
+                            CanvasDoorCard(
+                                subject: canvasSubject,
+                                next: canvas.snapshot.next,
+                                dueThisWeek: canvas.snapshot.dueThisWeek(),
+                                problem: canvasProblem
+                            )
+                        }
+                        .buttonStyle(.plain)
+                        .simultaneousGesture(TapGesture().onEnded { haptics.soft() })
 
-                Spacer()
+                        Spacer()
 
-                HStack(spacing: 12) {
-                    Signature()
+                        HStack(spacing: 12) {
+                            Signature()
 
-                    Button {
-                        haptics.soft()
-                        showBackup = true
-                    } label: {
-                        Image(systemName: "square.and.arrow.up")
-                            .font(.system(size: 12, weight: .black))
-                            .frame(width: 30, height: 30)
-                            .foregroundStyle(Palette.bone.opacity(0.3))
-                            .background(Circle().fill(Palette.steel.opacity(0.7)))
+                            Button {
+                                haptics.soft()
+                                showBackup = true
+                            } label: {
+                                Image(systemName: "square.and.arrow.up")
+                                    .font(.system(size: 12, weight: .black))
+                                    .frame(width: 30, height: 30)
+                                    .foregroundStyle(Palette.bone.opacity(0.3))
+                                    .background(Circle().fill(Palette.steel.opacity(0.7)))
+                            }
+                            .buttonStyle(.plain)
+                        }
                     }
-                    .buttonStyle(.plain)
+                    .padding(.horizontal, 20)
+                    .padding(.top, 2)
+                    .padding(.bottom, 16)
+                    .frame(
+                        maxWidth: .infinity,
+                        minHeight: proxy.size.height,
+                        alignment: .top
+                    )
                 }
+                .scrollBounceBehavior(.basedOnSize)
             }
-            .padding(.horizontal, 20)
-            .padding(.bottom, 16)
-            .frame(maxWidth: .infinity, maxHeight: .infinity, alignment: .top)
             // A background takes no part in layout, so the gradient and the
             // backdrop still run under the notch while the cards stay inside
             // the safe area. As siblings in a ZStack they stretched the whole
-            // stack past it, which is what put the signing strip under the
-            // camera.
+            // stack past it.
             .background {
                 ZStack {
                     LinearGradient(
