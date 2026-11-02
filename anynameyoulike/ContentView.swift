@@ -43,11 +43,13 @@ struct ContentView: View {
                 BladeBackdrop(roll: motion.roll, pitch: motion.pitch)
 
                 VStack(spacing: 14) {
+                    SigningStrip()
+                        .padding(.top, 6)
+
                     TrashBar(rota: rota) {
                         haptics.soft()
                         showTrash = true
                     }
-                    .padding(.top, 6)
 
                     NavigationLink {
                         HealthDashboard()
@@ -132,7 +134,11 @@ struct ContentView: View {
             landFromNotification()
         }
         .onChange(of: scenePhase) { _, phase in
-            if phase == .active { landFromNotification() }
+            guard phase == .active else { return }
+            landFromNotification()
+            // The profile can be replaced under a running install, so the
+            // pair is laid down again rather than trusted from launch.
+            Task { await Signing.scheduleReminders() }
         }
         .onChange(of: scenePhase) { _, phase in
             if phase == .active {
@@ -142,6 +148,7 @@ struct ContentView: View {
         .task {
             // A dated copy a day, before anything can change the document.
             Backup.Snapshots.writeIfDue()
+            await Signing.scheduleReminders()
             nagToExportIfOverdue()
 
             await HealthAuth.request()
