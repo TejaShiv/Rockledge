@@ -180,8 +180,13 @@ fi
 
 # -- 1. is the phone there? --------------------------------------------
 
-if ! /usr/bin/xcrun devicectl device info details --device "$DEVICE_UDID" \
-        > /dev/null 2>&1; then
+# `devicectl device info details` is NOT a reachability test: it answers
+# from cached pairing data and exits 0 for a phone that is asleep or on
+# another network, which would send the job on to a build that then fails
+# on the destination and push a failure that was never one. Asking for the
+# lock state needs a live tunnel, so it fails when the phone really is away.
+if ! /usr/bin/xcrun devicectl device info lockState \
+        --device "$DEVICE_UDID" --timeout 45 > /dev/null 2>&1; then
     # Not a failure. The phone is asleep, out of the house, or on another
     # network, and the next run will find it.
     log "phone not reachable, leaving it for the next run"
