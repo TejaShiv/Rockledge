@@ -392,3 +392,82 @@ struct CanvasTests {
         #expect(CanvasPalette.tint(for: "DS4400") != CanvasPalette.tint(for: "CS5610"))
     }
 }
+
+/// The reply, and the ways it can arrive wrong.
+///
+/// "Canvas error 200" was a real bug: an Accept header asked for string ids,
+/// every decode failed, and the only thing reported back was the HTTP status,
+/// which was fine. These cover the shapes and the message.
+struct CanvasReplyTests {
+
+    private func decode<T: Decodable>(_ json: String, as type: T.Type) throws -> T {
+        let decoder = JSONDecoder()
+        decoder.keyDecodingStrategy = .convertFromSnakeCase
+        decoder.dateDecodingStrategy = .iso8601
+        return try decoder.decode(T.self, from: CanvasAPI.readable(Data(json.utf8)))
+    }
+
+    /// Canvas can spoil a cross-site read by prefixing this. It is not JSON.
+    @Test func stripsTheAntiHijackingPrefix() throws {
+        let guarded = #"while(1);[{"id":1,"name":"x"}]"#
+        let plain = #"[{"id":1,"name":"x"}]"#
+
+        #expect(CanvasAPI.readable(Data(guarded.utf8)) == Data(plain.utf8))
+        // Anything without the prefix is handed back untouched.
+        #expect(CanvasAPI.readable(Data(plain.utf8)) == Data(plain.utf8))
+        #expect(CanvasAPI.readable(Data()) == Data())
+    }
+
+    @Test func readsAnAssignmentWithNumericIDs() throws {
+        let json = """
+        [{"id": 991, "name": "Q3 JavaScript", "due_at": "2026-11-12T02:59:00Z",
+          "html_url": "https://northeastern.instructure.com/courses/1/assignments/991",
+          "submission": {"submitted_at": null, "workflow_state": "unsubmitted"}}]
+        """
+
+        let parsed = try decode(json, as: [CanvasWireProbe].self)
+
+        #expect(parsed[0].id == 991)
+        #expect(parsed[0].name == "Q3 JavaScript")
+    }
+
+    /// The exact failure that produced "Canvas error 200".
+    @Test func readsAnAssignmentWhoseIDsCameBackQuoted() throws {
+        let json = #"[{"id": "991", "name": "Q3 JavaScript"}]"#
+
+        let parsed = try decode(json, as: [CanvasWireProbe].self)
+
+        #expect(parsed[0].id == 991)
+    }
+
+    @Test func anUnreadableReplySaysWhatWasWrongNotTheStatusCode() {
+        let failure = CanvasAPI.Failure.unreadable("the reply is not a Int")
+
+        #expect(failure.message == "Canvas replied oddly: the reply is not a Int")
+        #expect(!failure.needsNewToken)
+        // The point of the change: no status code in the message.
+        #expect(!failure.message.contains("200"))
+    }
+
+    @Test func onlyAToken401SaysTheTokenNeedsReplacing() {
+        #expect(CanvasAPI.Failure.unauthorised.needsNewToken)
+        #expect(!CanvasAPI.Failure.offline.needsNewToken)
+        #expect(!CanvasAPI.Failure.badResponse(500).needsNewToken)
+        #expect(!CanvasAPI.Failure.noToken.needsNewToken)
+    }
+}
+
+/// Stands in for the private wire type so the id handling can be exercised
+/// without opening it up.
+struct CanvasWireProbe: Decodable {
+    var id: Int
+    var name: String?
+
+    enum CodingKeys: String, CodingKey { case id, name }
+
+    init(from decoder: Decoder) throws {
+        let box = try decoder.container(keyedBy: CodingKeys.self)
+        id = try CanvasAPI.identifier(box, .id)
+        name = try box.decodeIfPresent(String.self, forKey: .name)
+    }
+}

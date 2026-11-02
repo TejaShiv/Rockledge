@@ -232,6 +232,9 @@ nonisolated enum CanvasAPI {
         case unauthorised
         case offline
         case badResponse(Int)
+        /// A 200 whose body did not decode. Says where it went wrong,
+        /// because the status code alone is useless here.
+        case unreadable(String)
 
         /// What the screens actually say. The 401 case is the one that
         /// matters: a Canvas token is revoked or expires silently, and
@@ -242,6 +245,7 @@ nonisolated enum CanvasAPI {
             case .unauthorised: return "Canvas token needs replacing"
             case .offline: return "No connection"
             case .badResponse(let code): return "Canvas error \(code)"
+            case .unreadable(let why): return "Canvas replied oddly: \(why)"
             }
         }
 
@@ -253,6 +257,14 @@ nonisolated enum CanvasAPI {
     private struct Course: Decodable {
         var id: Int
         var name: String?
+
+        enum CodingKeys: String, CodingKey { case id, name }
+
+        init(from decoder: Decoder) throws {
+            let box = try decoder.container(keyedBy: CodingKeys.self)
+            id = try identifier(box, .id)
+            name = try box.decodeIfPresent(String.self, forKey: .name)
+        }
     }
 
     private struct Assignment: Decodable {
@@ -261,6 +273,34 @@ nonisolated enum CanvasAPI {
         var dueAt: Date?
         var htmlUrl: URL?
         var submission: Submission?
+
+        enum CodingKeys: String, CodingKey {
+            case id, name, dueAt, htmlUrl, submission
+        }
+
+        init(from decoder: Decoder) throws {
+            let box = try decoder.container(keyedBy: CodingKeys.self)
+            id = try identifier(box, .id)
+            name = try box.decodeIfPresent(String.self, forKey: .name)
+            dueAt = try box.decodeIfPresent(Date.self, forKey: .dueAt)
+            htmlUrl = try box.decodeIfPresent(URL.self, forKey: .htmlUrl)
+            submission = try box.decodeIfPresent(Submission.self, forKey: .submission)
+        }
+    }
+
+    /// An id arrives as a number normally and as a string if anything ever
+    /// asks Canvas for string ids. Taking both costs a line and removes a
+    /// whole class of silent decode failure.
+    static func identifier<K: CodingKey>(_ box: KeyedDecodingContainer<K>,
+                                         _ key: K) throws -> Int {
+        if let number = try? box.decode(Int.self, forKey: key) { return number }
+        if let text = try? box.decode(String.self, forKey: key),
+           let number = Int(text) { return number }
+
+        throw DecodingError.typeMismatch(Int.self, DecodingError.Context(
+            codingPath: box.codingPath + [key],
+            debugDescription: "id is neither a number nor a numeric string"
+        ))
     }
 
     private struct Submission: Decodable {
@@ -372,8 +412,11 @@ nonisolated enum CanvasAPI {
                                            token: String) async throws -> ([T], URL?) {
         var request = URLRequest(url: url, timeoutInterval: 20)
         request.setValue("Bearer \(token)", forHTTPHeaderField: "Authorization")
-        request.setValue("application/json+canvas-string-ids",
-                         forHTTPHeaderField: "Accept")
+        // Plain JSON on purpose. Canvas also offers
+        // "application/json+canvas-string-ids", which quotes every id — and
+        // every id here is an Int, so asking for that silently broke every
+        // decode and surfaced as "Canvas error 200".
+        request.setValue("application/json", forHTTPHeaderField: "Accept")
 
         let data: Data
         let response: URLResponse
@@ -397,12 +440,45 @@ nonisolated enum CanvasAPI {
         decoder.keyDecodingStrategy = .convertFromSnakeCase
         decoder.dateDecodingStrategy = .iso8601
 
-        guard let items = try? decoder.decode([T].self, from: data) else {
-            throw Failure.badResponse(http.statusCode)
+        do {
+            let items = try decoder.decode([T].self, from: readable(data))
+            return (items, nextPage(in: http.value(forHTTPHeaderField: "Link")))
+        } catch let problem as DecodingError {
+            throw Failure.unreadable(describe(problem))
+        } catch {
+            throw Failure.unreadable("unexpected shape")
         }
 
-        let link = http.value(forHTTPHeaderField: "Link")
-        return (items, nextPage(in: link))
+    }
+
+    /// Canvas can prefix a response with `while(1);` to spoil a naive
+    /// cross-site read of it. That is not JSON, and the decoder stops dead
+    /// on the first character.
+    static func readable(_ data: Data) -> Data {
+        let guardText = Data("while(1);".utf8)
+        guard data.starts(with: guardText) else { return data }
+        return data.dropFirst(guardText.count)
+    }
+
+    /// Enough to say which field was wrong, without a wall of text.
+    private static func describe(_ problem: DecodingError) -> String {
+        func path(_ context: DecodingError.Context) -> String {
+            let keys = context.codingPath.map(\.stringValue).filter { !$0.isEmpty }
+            return keys.isEmpty ? "the reply" : keys.joined(separator: ".")
+        }
+
+        switch problem {
+        case .keyNotFound(let key, let context):
+            return "\(path(context)) has no \(key.stringValue)"
+        case .typeMismatch(let type, let context):
+            return "\(path(context)) is not a \(type)"
+        case .valueNotFound(_, let context):
+            return "\(path(context)) was empty"
+        case .dataCorrupted(let context):
+            return context.codingPath.isEmpty ? "not JSON" : "\(path(context)) is malformed"
+        @unknown default:
+            return "unexpected shape"
+        }
     }
 
     /// `<https://…&page=2>; rel="next",<https://…>; rel="last"`
