@@ -129,6 +129,11 @@ nonisolated enum CanvasReminders {
     /// back. Identifiers carry the assignment id, so a due date that moved
     /// replaces its old reminder rather than adding a second one.
     static func reschedule(_ snapshot: CanvasSnapshot, now: Date = Date()) async {
+        await place(snapshot, now: now)
+        await Shared.notifications.measure()
+    }
+
+    private static func place(_ snapshot: CanvasSnapshot, now: Date) async {
         let center = UNUserNotificationCenter.current()
 
         let stale = await center.pendingNotificationRequests()
@@ -174,6 +179,7 @@ nonisolated enum CanvasReminders {
             .filter { $0.hasPrefix(prefix) }
 
         center.removePendingNotificationRequests(withIdentifiers: mine)
+        await Shared.notifications.measure()
     }
 }
 

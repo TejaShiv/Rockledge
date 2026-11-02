@@ -9,5 +9,6 @@ enum Shared {
     static let pantry = Pantry()
     static let transit = Transit()
     static let canvas = CanvasBoard()
+    static let notifications = NotificationLedger()
     static let router = Router()
 }

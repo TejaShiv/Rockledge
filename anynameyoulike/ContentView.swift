@@ -191,6 +191,10 @@ struct ContentView: View {
             await TrashReminder.reschedule(rota)
             await NightlyReminder.apply()
             await refresh()
+
+            // Counted after the whole launch pass, once everything that
+            // schedules has had its turn.
+            await Shared.notifications.measure()
         }
     }
 

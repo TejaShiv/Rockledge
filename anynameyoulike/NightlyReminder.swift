@@ -154,6 +154,12 @@ nonisolated enum NightlyReminder {
     /// Schedules, or clears, to match the stored settings.
     @discardableResult
     static func apply(at date: Date? = nil) async -> Bool {
+        let scheduled = await place(at: date)
+        await Shared.notifications.measure()
+        return scheduled
+    }
+
+    private static func place(at date: Date?) async -> Bool {
         let center = UNUserNotificationCenter.current()
 
         if let date {

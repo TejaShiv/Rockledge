@@ -38,6 +38,7 @@ struct BackupSheet: View {
                         exportPanel
                         importPanel
                         snapshotsPanel
+                        notificationPanel
                     }
                     .padding(.horizontal, 20)
                     .padding(.top, 8)
@@ -56,6 +57,7 @@ struct BackupSheet: View {
             // Prepared up front so the button is one tap, not two, and so a
             // tap on the reminder lands on the destination picker.
             exported = try? Backup.exportFile()
+            await Shared.notifications.measure()
         }
         .fileImporter(
             isPresented: $picking,
@@ -103,6 +105,98 @@ struct BackupSheet: View {
             Text(problem.errorDescription ?? "That file could not be read.")
         }
     }
+
+    // MARK: What iOS is actually holding
+
+    /// iOS keeps 64 pending notifications and silently drops the rest, and
+    /// every module here schedules against an estimate. This is the real
+    /// number, read back from the notification centre.
+    @ViewBuilder
+    private var notificationPanel: some View {
+        if let census = Shared.notifications.census {
+            VStack(alignment: .leading, spacing: 12) {
+                Text("notifications pending")
+                    .font(.system(size: 9, weight: .black))
+                    .tracking(1.6)
+                    .foregroundStyle(Palette.bone.opacity(0.3))
+
+                HStack(alignment: .firstTextBaseline, spacing: 4) {
+                    Text("\(census.total)")
+                        .font(.system(size: 34, weight: .heavy)
+                            .width(.expanded).monospacedDigit())
+                        .foregroundStyle(census.pressure.tint)
+
+                    Text("/ \(NotificationCensus.limit)")
+                        .font(.system(size: 13, weight: .black).monospacedDigit())
+                        .foregroundStyle(Palette.bone.opacity(0.3))
+
+                    Spacer(minLength: 8)
+
+                    if census.pressure != .fine {
+                        Text(census.pressure == .critical ? "over budget" : "getting full")
+                            .font(.system(size: 9, weight: .black))
+                            .tracking(1.2)
+                            .foregroundStyle(census.pressure.tint)
+                    }
+                }
+
+                // Full width is the cap, so the bar reads against 64 rather
+                // than against whatever happens to be scheduled today.
+                GeometryReader { proxy in
+                    ZStack(alignment: .leading) {
+                        Capsule()
+                            .fill(Palette.bone.opacity(0.08))
+                        Capsule()
+                            .fill(census.pressure.tint.opacity(0.75))
+                            .frame(
+                                width: proxy.size.width
+                                    * min(1, Double(census.total)
+                                          / Double(NotificationCensus.limit))
+                            )
+                    }
+                }
+                .frame(height: 5)
+
+                VStack(spacing: 7) {
+                    ForEach(census.modules) { module in
+                        HStack(spacing: 10) {
+                            Text(module.name)
+                                .font(.system(size: 13, weight: .bold))
+                                .foregroundStyle(Palette.bone.opacity(0.8))
+
+                            Spacer(minLength: 8)
+
+                            Text("\(module.count)")
+                                .font(.system(size: 13, weight: .black)
+                                    .monospacedDigit())
+                                .foregroundStyle(Palette.bone.opacity(0.55))
+                        }
+                    }
+
+                    if census.modules.isEmpty {
+                        Text("nothing scheduled")
+                            .font(.system(size: 13, weight: .bold))
+                            .foregroundStyle(Palette.bone.opacity(0.3))
+                            .frame(maxWidth: .infinity, alignment: .leading)
+                    }
+                }
+                .padding(.top, 2)
+
+                Text("read back from iOS at \(Self.clock.string(from: census.takenAt))")
+                    .font(.system(size: 9, weight: .medium))
+                    .foregroundStyle(Palette.bone.opacity(0.25))
+            }
+            .padding(20)
+            .frame(maxWidth: .infinity, alignment: .leading)
+            .glassBackdrop(cornerRadius: 28, tint: Palette.bone.opacity(0.06))
+        }
+    }
+
+    private static let clock: DateFormatter = {
+        let f = DateFormatter()
+        f.dateFormat = "HH:mm:ss"
+        return f
+    }()
 
     private func replaceWarning(for incoming: Backup.Summary) -> String {
         let now = current

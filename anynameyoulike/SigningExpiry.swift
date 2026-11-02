@@ -206,6 +206,11 @@ nonisolated enum Signing {
     /// and on every return to the foreground, since the profile can change
     /// underneath a running install.
     static func scheduleReminders(now: Date = Date()) async {
+        await place(now: now)
+        await Shared.notifications.measure()
+    }
+
+    private static func place(now: Date) async {
         let center = UNUserNotificationCenter.current()
         center.removePendingNotificationRequests(withIdentifiers: identifiers)
 

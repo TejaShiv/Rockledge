@@ -234,6 +234,11 @@ enum TrashReminder {
     /// Each notification carries a name, so they are scheduled individually
     /// rather than as one repeating request. Refreshed every launch.
     static func reschedule(_ rota: TrashRota) async {
+        await place(rota)
+        await Shared.notifications.measure()
+    }
+
+    private static func place(_ rota: TrashRota) async {
         let center = UNUserNotificationCenter.current()
         let settings = await center.notificationSettings()
         if settings.authorizationStatus == .notDetermined {
