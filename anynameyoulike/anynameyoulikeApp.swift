@@ -26,15 +26,25 @@ final class NotificationPresenter: NSObject, UNUserNotificationCenterDelegate {
 
 @main
 struct anynameyoulikeApp: App {
+    @Environment(\.scenePhase) private var phase
+
     private let presenter = NotificationPresenter()
 
     init() {
         UNUserNotificationCenter.current().delegate = presenter
+        // Has to happen before launch finishes, or the scheduler rejects the
+        // identifier for the rest of the process.
+        CanvasBackground.register()
     }
 
     var body: some Scene {
         WindowGroup {
             ContentView()
+                .onChange(of: phase) { _, now in
+                    // Booked on the way out, since that is the only moment
+                    // the system will actually run it from.
+                    if now == .background { CanvasBackground.schedule() }
+                }
         }
     }
 }

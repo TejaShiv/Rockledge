@@ -20,6 +20,7 @@ struct ContentView: View {
     private var motion: MotionTilt { Shared.motion }
     private var pantry: Pantry { Shared.pantry }
     private var transit: Transit { Shared.transit }
+    private var canvas: CanvasBoard { Shared.canvas }
 
     @State private var steps: Int?
     @State private var rota = TrashRota.load()
@@ -83,6 +84,19 @@ struct ContentView: View {
                             lines: transitLines,
                             emptyMessage: "no buses to ruggles right now",
                             staleNote: transitStaleNote
+                        )
+                    }
+                    .buttonStyle(.plain)
+                    .simultaneousGesture(TapGesture().onEnded { haptics.soft() })
+
+                    NavigationLink {
+                        CanvasDashboard()
+                    } label: {
+                        CanvasDoorCard(
+                            subject: canvasSubject,
+                            next: canvas.snapshot.next,
+                            dueThisWeek: canvas.snapshot.dueThisWeek(),
+                            problem: canvasProblem
                         )
                     }
                     .buttonStyle(.plain)
@@ -255,12 +269,33 @@ struct ContentView: View {
         }
     }
 
+    /// The class the next piece of work belongs to, which is what colours
+    /// the card.
+    private var canvasSubject: CanvasClass? {
+        guard let next = canvas.snapshot.next else { return nil }
+        return canvas.snapshot.class(next.courseID)
+    }
+
+    /// Only shown when there is nothing better to show. A stale cache still
+    /// beats an error, so a failed refresh with work already on screen says
+    /// nothing at all.
+    private var canvasProblem: String? {
+        guard canvas.snapshot.next == nil else { return nil }
+        switch canvas.failure {
+        case .noToken: return "connect canvas"
+        case .unauthorised: return "canvas token needs replacing"
+        case .some(let other) where canvas.snapshot.isEmpty: return other.message.lowercased()
+        default: return nil
+        }
+    }
+
     private func refresh() async {
         steps = await writer.todayTotal()
         rota = TrashRota.load()
         // Pinned to the home stop, so the home screen never asks where you
         // are and opening the app cannot trigger a location prompt.
         await transit.refreshHomeStop()
+        await canvas.refresh()
     }
 }
 

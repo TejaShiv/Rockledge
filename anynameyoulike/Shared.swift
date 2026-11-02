@@ -8,5 +8,6 @@ enum Shared {
     static let sleep = SleepMonitor()
     static let pantry = Pantry()
     static let transit = Transit()
+    static let canvas = CanvasBoard()
     static let router = Router()
 }

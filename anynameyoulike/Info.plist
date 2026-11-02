@@ -17,5 +17,17 @@
 	     know where you are while it is closed. -->
 	<key>NSLocationWhenInUseUsageDescription</key>
 	<string>Finds the nearest bus stop so the app can show you the next arrivals. Only used while the MBTA screen is open.</string>
+
+	<!-- Canvas assignments are refreshed in the background so reminders
+	     stay honest: work handed in on a laptop stops nagging, and work
+	     posted mid-week gets a reminder without the app being opened. -->
+	<key>BGTaskSchedulerPermittedIdentifiers</key>
+	<array>
+		<string>steps.anynameyoulike.canvas.refresh</string>
+	</array>
+	<key>UIBackgroundModes</key>
+	<array>
+		<string>fetch</string>
+	</array>
 </dict>
 </plist>
