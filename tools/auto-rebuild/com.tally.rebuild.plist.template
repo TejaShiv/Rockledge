@@ -1,0 +1,43 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
+<plist version="1.0">
+<dict>
+	<key>Label</key>
+	<string>com.tally.rebuild</string>
+
+	<key>ProgramArguments</key>
+	<array>
+		<string>__SCRIPT__</string>
+	</array>
+
+	<!-- Twice a day. The script does nothing until the profile is inside
+	     its last 48 hours, so this is four chances before any deadline. -->
+	<key>StartCalendarInterval</key>
+	<array>
+		<dict>
+			<key>Hour</key><integer>3</integer>
+			<key>Minute</key><integer>0</integer>
+		</dict>
+		<dict>
+			<key>Hour</key><integer>20</integer>
+			<key>Minute</key><integer>0</integer>
+		</dict>
+	</array>
+
+	<!-- And at login. launchd also runs a missed calendar job once the Mac
+	     wakes, so a closed lid at 3 AM only delays it. -->
+	<key>RunAtLoad</key>
+	<true/>
+
+	<key>StandardOutPath</key>
+	<string>__HOME__/Library/Logs/tally-rebuild.out.log</string>
+	<key>StandardErrorPath</key>
+	<string>__HOME__/Library/Logs/tally-rebuild.err.log</string>
+
+	<key>EnvironmentVariables</key>
+	<dict>
+		<key>PATH</key>
+		<string>/usr/bin:/bin:/usr/sbin:/sbin</string>
+	</dict>
+</dict>
+</plist>
