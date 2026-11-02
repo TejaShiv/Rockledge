@@ -13,6 +13,9 @@ nonisolated struct CanvasClass: Codable, Equatable, Identifiable, Hashable {
     var code: String
     /// "Web Development"
     var title: String
+    /// "Fall 2026", when the course name says so. Optional so a cache
+    /// written before this existed still decodes.
+    var term: String? = nil
 }
 
 /// A piece of work with a real deadline. Assignments without a due date are
@@ -68,6 +71,89 @@ nonisolated struct CanvasSnapshot: Codable, Equatable {
     }
 }
 
+// MARK: - Which term a class belongs to
+
+/// A semester, so last year's classes can be told from this year's.
+///
+/// `enrollment_state=active` does not mean what it sounds like: it describes
+/// the enrolment, not the term. A course nobody ever concluded stays active
+/// forever, which is how a first-semester class turns up in the third.
+nonisolated struct CanvasTerm: Equatable, Comparable {
+
+    enum Season: Int, CaseIterable, Comparable {
+        case spring = 0, summer, fall, winter
+
+        var word: String {
+            switch self {
+            case .spring: return "Spring"
+            case .summer: return "Summer"
+            case .fall: return "Fall"
+            case .winter: return "Winter"
+            }
+        }
+
+        static func < (a: Season, b: Season) -> Bool { a.rawValue < b.rawValue }
+    }
+
+    var season: Season
+    var year: Int
+
+    var label: String { "\(season.word) \(year)" }
+
+    static func < (a: CanvasTerm, b: CanvasTerm) -> Bool {
+        (a.year, a.season) < (b.year, b.season)
+    }
+
+    /// "Fall 2026"
+    init?(label: String) {
+        let words = label.split(separator: " ").map(String.init)
+        guard words.count >= 2,
+              let season = Season.allCases.first(where: {
+                  $0.word.caseInsensitiveCompare(words[0]) == .orderedSame
+              }),
+              let year = Int(words[1]), year > 1900
+        else { return nil }
+
+        self.season = season
+        self.year = year
+    }
+
+    init(season: Season, year: Int) {
+        self.season = season
+        self.year = year
+    }
+
+    /// The term a date falls in. Northeastern runs Spring to April, Summer
+    /// to August, Fall to the end of the year.
+    static func current(on date: Date = Date(), calendar: Calendar = .current) -> CanvasTerm {
+        let parts = calendar.dateComponents([.year, .month], from: date)
+        let month = parts.month ?? 1
+
+        let season: Season
+        switch month {
+        case 1...4: season = .spring
+        case 5...8: season = .summer
+        default: season = .fall
+        }
+
+        return CanvasTerm(season: season, year: parts.year ?? 2000)
+    }
+
+    /// Picks "Fall 2026" out of the tail of a course name.
+    static func find(in words: [String]) -> CanvasTerm? {
+        for (index, word) in words.enumerated() where index + 1 < words.count {
+            guard Season.allCases.contains(where: {
+                $0.word.caseInsensitiveCompare(word) == .orderedSame
+            }) else { continue }
+
+            if let term = CanvasTerm(label: "\(word) \(words[index + 1])") {
+                return term
+            }
+        }
+        return nil
+    }
+}
+
 // MARK: - Reading a course name
 
 /// Pulling a class out of the string Canvas calls a course name.
@@ -100,7 +186,11 @@ nonisolated enum CanvasCourseName {
         let title = rest[1..<sec].joined(separator: " ")
         guard !title.isEmpty else { return nil }
 
-        return CanvasClass(id: id, code: code, title: known[code] ?? title)
+        // The term sits after the section number: "… SEC 02 Fall 2026 […]".
+        let term = CanvasTerm.find(in: Array(rest[sec...]))
+
+        return CanvasClass(id: id, code: code,
+                           title: known[code] ?? title, term: term?.label)
     }
 
     /// "CS5610" as one word, or "CS 5610" as two. Returns the code and
@@ -257,14 +347,24 @@ nonisolated enum CanvasAPI {
     private struct Course: Decodable {
         var id: Int
         var name: String?
+        var term: Term?
 
-        enum CodingKeys: String, CodingKey { case id, name }
+        enum CodingKeys: String, CodingKey { case id, name, term }
 
         init(from decoder: Decoder) throws {
             let box = try decoder.container(keyedBy: CodingKeys.self)
             id = try identifier(box, .id)
             name = try box.decodeIfPresent(String.self, forKey: .name)
+            term = try? box.decodeIfPresent(Term.self, forKey: .term)
         }
+    }
+
+    /// Canvas's own enrolment term. Its end date is the one authority on
+    /// whether a course is over; it is often absent, which is why the name
+    /// is read as well.
+    private struct Term: Decodable {
+        var name: String?
+        var endAt: Date?
     }
 
     private struct Assignment: Decodable {
@@ -324,14 +424,27 @@ nonisolated enum CanvasAPI {
             path: "/api/v1/courses",
             query: [
                 URLQueryItem(name: "enrollment_state", value: "active"),
+                // Without this there is no way to tell a finished term from
+                // a running one: an enrolment stays "active" long after the
+                // course has ended.
+                URLQueryItem(name: "include[]", value: "term"),
                 URLQueryItem(name: "per_page", value: "100"),
             ],
             token: token
         )
 
+        let now = Date()
         let classes = courses.compactMap { course -> CanvasClass? in
-            guard let name = course.name else { return nil }
-            return CanvasCourseName.parse(name, id: course.id)
+            guard let name = course.name,
+                  let parsed = CanvasCourseName.parse(name, id: course.id)
+            else { return nil }
+
+            guard !isOver(termLabel: parsed.term,
+                          termEndsAt: course.term?.endAt,
+                          now: now)
+            else { return nil }
+
+            return parsed
         }
 
         // Each course is an independent round trip, so they go out together
@@ -352,6 +465,25 @@ nonisolated enum CanvasAPI {
             assignments: assignments.sorted { $0.dueAt < $1.dueAt },
             fetchedAt: Date()
         )
+    }
+
+    /// Whether a course has already finished.
+    ///
+    /// Only ever says yes when something says so plainly: Canvas's own term
+    /// end date, or a term in the course name that is older than the one
+    /// running now. A course it cannot place stays on screen, because
+    /// hiding real work is a worse failure than showing one stale class.
+    static func isOver(termLabel: String?,
+                       termEndsAt: Date?,
+                       now: Date = Date(),
+                       calendar: Calendar = .current) -> Bool {
+        if let termEndsAt, termEndsAt < now { return true }
+
+        if let termLabel, let term = CanvasTerm(label: termLabel) {
+            return term < CanvasTerm.current(on: now, calendar: calendar)
+        }
+
+        return false
     }
 
     private static func work(in subject: CanvasClass,

@@ -471,3 +471,125 @@ struct CanvasWireProbe: Decodable {
         name = try box.decodeIfPresent(String.self, forKey: .name)
     }
 }
+
+/// Telling this term's classes from the ones already sat through.
+///
+/// `enrollment_state=active` describes the enrolment, not the term, so a
+/// first-semester course turned up in the third. Two signals settle it:
+/// Canvas's own term end date, and the term printed in the course name.
+struct CanvasTermTests {
+
+    private var calendar: Calendar {
+        var c = Calendar(identifier: .gregorian)
+        c.timeZone = TimeZone(identifier: "America/New_York")!
+        c.locale = Locale(identifier: "en_US_POSIX")
+        return c
+    }
+
+    private func at(_ year: Int, _ month: Int, _ day: Int) -> Date {
+        calendar.date(from: DateComponents(year: year, month: month, day: day))!
+    }
+
+    // MARK: Reading a term
+
+    @Test func readsATermLabel() throws {
+        let fall = try #require(CanvasTerm(label: "Fall 2026"))
+
+        #expect(fall.season == .fall)
+        #expect(fall.year == 2026)
+        #expect(fall.label == "Fall 2026")
+    }
+
+    @Test func refusesSomethingThatIsNotATerm() {
+        #expect(CanvasTerm(label: "Fall") == nil)
+        #expect(CanvasTerm(label: "Autumn 2026") == nil)
+        #expect(CanvasTerm(label: "Fall twenty") == nil)
+        #expect(CanvasTerm(label: "") == nil)
+    }
+
+    @Test func termsSortInTheOrderTheyHappen() {
+        #expect(CanvasTerm(season: .spring, year: 2026)
+                < CanvasTerm(season: .fall, year: 2026))
+        #expect(CanvasTerm(season: .fall, year: 2025)
+                < CanvasTerm(season: .spring, year: 2026))
+        #expect(CanvasTerm(season: .summer, year: 2026)
+                < CanvasTerm(season: .fall, year: 2026))
+    }
+
+    @Test func worksOutWhichTermItIsNow() {
+        #expect(CanvasTerm.current(on: at(2026, 11, 2), calendar: calendar)
+                == CanvasTerm(season: .fall, year: 2026))
+        #expect(CanvasTerm.current(on: at(2026, 2, 10), calendar: calendar)
+                == CanvasTerm(season: .spring, year: 2026))
+        #expect(CanvasTerm.current(on: at(2026, 6, 1), calendar: calendar)
+                == CanvasTerm(season: .summer, year: 2026))
+    }
+
+    @Test func picksTheTermOutOfACourseName() throws {
+        let parsed = try #require(CanvasCourseName.parse(
+            "CS5610 17395 Web Development SEC 02 Fall 2026 [BOS-1-TR]", id: 7
+        ))
+
+        #expect(parsed.term == "Fall 2026")
+    }
+
+    /// The title must not swallow the term, and the term must not come from
+    /// a word that happens to sit in the title.
+    @Test func doesNotConfuseTheTitleWithTheTerm() throws {
+        let parsed = try #require(CanvasCourseName.parse(
+            "CS3200 14001 Fall Detection Systems SEC 01 Spring 2027 [BOS-1-MW]", id: 3
+        ))
+
+        #expect(parsed.title == "Fall Detection Systems")
+        #expect(parsed.term == "Spring 2027")
+    }
+
+    @Test func copesWithACourseNameWithNoTermInIt() throws {
+        let parsed = try #require(CanvasCourseName.parse(
+            "CS5610 17395 Web Development SEC 02", id: 7
+        ))
+
+        #expect(parsed.term == nil)
+    }
+
+    // MARK: Hiding what is over
+
+    private let november = Date(timeIntervalSince1970: 1_793_000_000)   // Nov 2026
+
+    /// The case that went wrong: Fundamentals of Computer Networking from
+    /// first semester, still enrolled, showing up in the third.
+    @Test func lastYearsClassIsOver() {
+        #expect(CanvasAPI.isOver(termLabel: "Fall 2025", termEndsAt: nil,
+                                 now: at(2026, 11, 2), calendar: calendar))
+        #expect(CanvasAPI.isOver(termLabel: "Spring 2026", termEndsAt: nil,
+                                 now: at(2026, 11, 2), calendar: calendar))
+    }
+
+    @Test func thisTermsClassStays() {
+        #expect(!CanvasAPI.isOver(termLabel: "Fall 2026", termEndsAt: nil,
+                                  now: at(2026, 11, 2), calendar: calendar))
+    }
+
+    /// Registering early must not hide the class.
+    @Test func nextTermsClassStays() {
+        #expect(!CanvasAPI.isOver(termLabel: "Spring 2027", termEndsAt: nil,
+                                  now: at(2026, 11, 2), calendar: calendar))
+    }
+
+    /// Canvas's own date wins when it has one.
+    @Test func canvasSayingTheTermEndedIsEnough() {
+        #expect(CanvasAPI.isOver(termLabel: nil, termEndsAt: at(2026, 5, 1),
+                                 now: at(2026, 11, 2), calendar: calendar))
+        #expect(!CanvasAPI.isOver(termLabel: nil, termEndsAt: at(2026, 12, 20),
+                                  now: at(2026, 11, 2), calendar: calendar))
+    }
+
+    /// Showing one stale class is a smaller failure than hiding real work,
+    /// so anything it cannot place stays on screen.
+    @Test func keepsAClassItCannotPlace() {
+        #expect(!CanvasAPI.isOver(termLabel: nil, termEndsAt: nil,
+                                  now: at(2026, 11, 2), calendar: calendar))
+        #expect(!CanvasAPI.isOver(termLabel: "Michaelmas 2026", termEndsAt: nil,
+                                  now: at(2026, 11, 2), calendar: calendar))
+    }
+}
