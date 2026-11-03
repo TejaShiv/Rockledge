@@ -47,6 +47,13 @@ struct ContentView: View {
                         SigningStrip()
                             .padding(.top, 6)
 
+                        BackupStrip {
+                            haptics.soft()
+                            if let file = try? Backup.exportFile() {
+                                sharingFile = ExportedFile(url: file)
+                            }
+                        }
+
                         TrashBar(rota: rota) {
                             haptics.soft()
                             showTrash = true
@@ -186,8 +193,6 @@ struct ContentView: View {
             // A dated copy a day, before anything can change the document.
             Backup.Snapshots.writeIfDue()
             await Signing.scheduleReminders()
-            nagToExportIfOverdue()
-
             await HealthAuth.request()
             await TrashReminder.reschedule(rota)
             await NightlyReminder.apply()
@@ -255,29 +260,6 @@ struct ContentView: View {
         f.dateFormat = "HH:mm"
         return f
     }()
-
-    /// Puts the share sheet up on launch when the last copy to leave the app
-    /// is more than five days old.
-    ///
-    /// The sheet itself rather than a banner: losing the container costs
-    /// everything, and a banner is the easiest thing in the world to swipe
-    /// away without reading. It is still dismissible — it just defaults to
-    /// being in the way.
-    ///
-    /// Once per launch, from `.task`, so coming back from the background does
-    /// not keep raising it.
-    private func nagToExportIfOverdue() {
-        guard sharingFile == nil, !showBackup else { return }
-
-        let document = Store.document
-        guard Backup.isExportOverdue(
-            lastExport: Backup.lastExport,
-            hasContent: Backup.Summary(document).isWorthKeeping
-        ) else { return }
-
-        guard let file = try? Backup.exportFile() else { return }
-        sharingFile = ExportedFile(url: file)
-    }
 
     /// A tap on the nightly reminder lands here, on the destination picker
     /// itself rather than on the backup screen.

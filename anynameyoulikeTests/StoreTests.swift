@@ -131,3 +131,29 @@ struct StoreTests {
         #expect(doc.trashRota.people.filter { $0.hasPrefix(tag) }.count == runs)
     }
 }
+
+/// Where the tests are allowed to write.
+///
+/// The suite runs inside the app's own process, so without a redirect it
+/// operates on the same document the app does — on a device, your real
+/// data. This asserts the redirect is in force, because a silent regression
+/// here would not fail anything else until it had already cost something.
+struct StoreLocationTests {
+
+    @Test func testsNeverTouchTheRealDocument() {
+        let path = Store.url.path
+
+        #expect(path.contains("tally-tests"),
+                "Store is writing to \(path) during a test run")
+        #expect(!path.contains("/Documents/"),
+                "Store is writing to the app's Documents folder during a test run")
+    }
+
+    @Test func theScratchFolderIsReal() throws {
+        // Writing has to actually work there, or every Store test would be
+        // passing against a file that never lands.
+        Store.mutate { $0.stepLedger = [] }
+
+        #expect(FileManager.default.fileExists(atPath: Store.url.path))
+    }
+}

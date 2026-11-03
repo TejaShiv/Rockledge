@@ -4,6 +4,11 @@ import Testing
 
 /// Import validation. Getting this wrong destroys the only copy of the data,
 /// so the refusals matter more than the acceptances.
+/// Serialised: two of these export a file, and the exported name is
+/// precise to the minute — `kalla-2026-11-02-2048.json` — so two exports in
+/// the same minute share a path and each test's cleanup can delete the
+/// other's file mid-read. Rare, and it did happen.
+@Suite(.serialized)
 struct BackupTests {
 
     private func json(_ text: String) -> Data { Data(text.utf8) }

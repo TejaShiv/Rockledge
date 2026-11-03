@@ -29,8 +29,41 @@ nonisolated enum Store {
     /// Holds the loaded document, or nil before the first read.
     private static let cache = Mutex<Document?>(nil)
 
+    /// True when this process was started by the test runner.
+    ///
+    /// The unit tests run inside the app's own process, because an app
+    /// target cannot be tested without its host. Without this they read and
+    /// write the same `kalla.json` the running app does — which on a device
+    /// is your actual data, and which has broken the suite three separate
+    /// times when the app's own launch work landed in the middle of a test.
+    ///
+    /// Detected rather than injected so it cannot be forgotten: there is no
+    /// opt-in for a suite to miss, and the app host's own writes during a
+    /// test run are redirected too.
+    private static let underTest: Bool = {
+        let environment = ProcessInfo.processInfo.environment
+        return environment["XCTestConfigurationFilePath"] != nil
+            || environment["XCTestBundlePath"] != nil
+            || NSClassFromString("XCTestCase") != nil
+    }()
+
+    /// One scratch folder for the whole test process, thrown away with the
+    /// simulator rather than cleaned up: a test that fails is easier to look
+    /// into when its document is still on disk.
+    private static let scratch: URL = {
+        let folder = FileManager.default.temporaryDirectory
+            .appendingPathComponent("tally-tests")
+        try? FileManager.default.createDirectory(
+            at: folder, withIntermediateDirectories: true
+        )
+        return folder
+    }()
+
     static var folder: URL {
-        FileManager.default.urls(for: .documentDirectory, in: .userDomainMask)[0]
+        if underTest { return scratch }
+        return FileManager.default.urls(
+            for: .documentDirectory, in: .userDomainMask
+        )[0]
     }
 
     static var url: URL { folder.appendingPathComponent(fileName) }
