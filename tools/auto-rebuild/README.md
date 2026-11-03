@@ -30,20 +30,57 @@ So the script does two things a manual rebuild does not:
 
 1. Checks the phone answers over wireless debugging. If not, logs it and
    exits quietly — asleep or out of the house is normal, not a failure.
-2. Reads the expiry of the last build it made. More than 48 hours left means
+2. **Copies `kalla.json` off the phone** into `~/.config/tally-rebuild/backups/`,
+   keeping the last 30. See below.
+3. Reads the expiry of the last build it made. More than 48 hours left means
    there is nothing to do. `--force` skips this.
-3. Checks out `main` into a throwaway git worktree, so whatever you have
+4. Checks out `main` into a throwaway git worktree, so whatever you have
    half-finished in your own folder is never what lands on the phone. It
    never commits, pushes or touches your working tree.
-4. Deletes the cached profiles for `steps.anynameyoulike` (and its UITests
+5. Deletes the cached profiles for `steps.anynameyoulike` (and its UITests
    bundle, which shares the prefix).
-5. Builds for the phone's UDID, installs with `devicectl`, and tries to
+6. Builds for the phone's UDID, installs with `devicectl`, and tries to
    launch so the in-app reminders reschedule. A locked phone refuses the
    launch; the install still counts.
-6. Confirms the new expiry moved. If it did not, the run fails loudly.
-7. Pushes to ntfy — on success and on failure only, never on the quiet
+7. Confirms the new expiry moved. If it did not, the run fails loudly.
+8. Pushes to ntfy — on success and on failure only, never on the quiet
    "nothing to do" runs. Failures also raise a macOS notification, in case
    the phone is the thing that is missing.
+
+## The backup
+
+Every run, before the expiry check short-circuits it — so twice a day rather
+than only when a rebuild happens to be due.
+
+The copy is pulled to a scratch file and **validated before anything good is
+touched**: it has to parse as JSON, be an object, and carry a `version` the
+app understands. That is the same check `Backup.inspect` makes on import, and
+for the same reason — the app's decoder is deliberately tolerant and would
+turn any JSON object into an empty document, so a truncated pull has to be
+caught here rather than quietly kept as if it were real. A failed pull leaves
+every existing backup alone, and pruning only runs after a good copy lands.
+
+A backup failure does **not** fail the run. Re-signing is what keeps the app
+running at all; a missed copy is worth telling you about, not worth blocking
+the rebuild over. You get a push either way.
+
+Two things that were measured rather than assumed:
+
+- **The copy works with the phone locked.** `Store` writes `kalla.json` with
+  `completeFileProtectionUntilFirstUserAuthentication` — chosen originally so
+  Siri could log things while locked — which also means the Mac can read it
+  while locked, provided the phone has been unlocked once since it last
+  booted. Verified with `passcodeRequired: true` either side of the copy.
+- **A rebuild keeps your data.** A full rebuild and reinstall on the same
+  signing certificate left `kalla.json` byte-for-byte identical. The container
+  is keyed to the bundle id and signing identity, so a routine re-sign is
+  invisible to it. Only a *certificate* change gives the app a new container,
+  which is the event that lost everything the first time.
+
+The one case where the copy will fail: the phone has rebooted and nobody has
+unlocked it yet. Until the first unlock, the file is unreadable by design.
+The failure push says how old the last good backup is, so an overnight reboot
+reads as "0 day(s) ago" rather than as an emergency.
 
 ## Setup
 
@@ -70,6 +107,7 @@ wakes.
 
 ```
 tail -f ~/Library/Logs/tally-rebuild.log     # what it has been doing
+ls -lt ~/.config/tally-rebuild/backups/      # the copies it has pulled
 ./rebuild.sh --force                         # rebuild right now
 launchctl print gui/$UID/com.tally.rebuild   # is the agent loaded
 ```
@@ -79,9 +117,12 @@ A healthy quiet run looks like:
 ```
 2026-11-02 20:00:01  --- run started
 2026-11-02 20:00:02  phone is reachable
+2026-11-02 20:00:02  backed up kalla-2026-11-02-2000.json (57263 bytes, document version 1)
 2026-11-02 20:00:02  current build expires Monday 9 November, 1:03 AM (148h left)
 2026-11-02 20:00:02  more than 48h left, nothing to do
 ```
+
+Note the backup on a run that did nothing else. That is the point of it.
 
 The log rotates at 512 KB to a single `.log.1`.
 

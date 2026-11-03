@@ -35,6 +35,10 @@ BRANCH="main"
 REBUILD_WITHIN=$((48 * 3600))
 LOG_MAX=$((512 * 1024))
 
+# Backups live beside the config, not in the repo.
+BACKUP_DIR="$CONFIG_DIR/backups"
+BACKUP_KEEP=30
+
 NTFY_SERVER="https://ntfy.sh"
 NTFY_TOPIC=""
 DEVICE_UDID=""
@@ -123,6 +127,111 @@ PY
 when() { /bin/date -r "$1" '+%A %-d %B, %-I:%M %p'; }
 when_short() { /bin/date -r "$1" '+%A %-I:%M %p'; }
 
+# ---------------------------------------------------------------- backing up
+
+# The version this build of the app understands, read from the source so the
+# two cannot drift apart. A document from a newer build must not be kept as
+# though it were readable.
+known_version() {
+    local found
+    found=$(/usr/bin/grep -oE 'currentVersion *= *[0-9]+' \
+                "$REPO/anynameyoulike/Store.swift" 2>/dev/null \
+            | /usr/bin/grep -oE '[0-9]+$' | /usr/bin/head -1)
+    echo "${found:-1}"
+}
+
+# Same check the app makes on import: read `version` out of the raw JSON
+# before trusting any of it. The app's decoder is deliberately tolerant and
+# would turn any JSON object into an empty document, so a truncated or
+# half-written pull has to be caught here rather than decoded into silence.
+validate_pull() {      # validate_pull <file> <highest known version>
+    /usr/bin/python3 -I - "$1" "$2" <<'PY'
+import json, sys
+try:
+    doc = json.load(open(sys.argv[1], "rb"))
+except Exception:
+    sys.exit(1)
+if not isinstance(doc, dict):
+    sys.exit(1)
+version = doc.get("version")
+if not isinstance(version, int) or isinstance(version, bool):
+    sys.exit(1)
+if version > int(sys.argv[2]):
+    sys.exit(1)
+print(version)
+PY
+}
+
+BACKUP_PROBLEM=""
+
+# Runs on every pass, whether or not a rebuild was due. The rebuild only acts
+# in the last 48 hours; losing the data is the thing with no deadline at all.
+back_up_data() {
+    /bin/mkdir -p "$BACKUP_DIR"
+
+    local tmp stamp dest version
+    tmp=$(/usr/bin/mktemp -d -t tally-backup) || {
+        BACKUP_PROBLEM="no temporary space on the Mac"; return 1
+    }
+
+    # Pulled to a scratch file first. Nothing already good is touched until
+    # the new copy has been read and believed.
+    if ! /usr/bin/xcrun devicectl device copy from \
+            --device "$DEVICE_UDID" \
+            --domain-type appDataContainer \
+            --domain-identifier "$BUNDLE_ID" \
+            --source Documents/kalla.json \
+            --destination "$tmp/kalla.json" \
+            --timeout 90 > /dev/null 2>&1; then
+        /bin/rm -rf "$tmp"
+        BACKUP_PROBLEM="could not copy kalla.json off the phone"
+        return 1
+    fi
+
+    if ! version=$(validate_pull "$tmp/kalla.json" "$(known_version)"); then
+        /bin/rm -rf "$tmp"
+        BACKUP_PROBLEM="the file pulled off the phone did not look like a Tally document"
+        return 1
+    fi
+
+    stamp=$(/bin/date '+%Y-%m-%d-%H%M')
+    dest="$BACKUP_DIR/kalla-$stamp.json"
+    /bin/mv -f "$tmp/kalla.json" "$dest" || {
+        /bin/rm -rf "$tmp"
+        BACKUP_PROBLEM="could not write the backup to $BACKUP_DIR"
+        return 1
+    }
+    /bin/rm -rf "$tmp"
+
+    local size
+    size=$(/usr/bin/stat -f%z "$dest" 2>/dev/null || echo 0)
+    log "backed up $(/usr/bin/basename "$dest") (${size} bytes, document version $version)"
+
+    prune_backups
+    return 0
+}
+
+# Newest thirty kept. Pruned only after a good copy has landed, so a run that
+# could not pull anything never costs you history.
+prune_backups() {
+    local dropped=0 old
+    while IFS= read -r old; do
+        [ -n "$old" ] || continue
+        /bin/rm -f "$old" && dropped=$((dropped + 1))
+    done < <(/bin/ls -t "$BACKUP_DIR"/kalla-*.json 2>/dev/null | /usr/bin/tail -n +$((BACKUP_KEEP + 1)))
+
+    [ "$dropped" -gt 0 ] && log "pruned $dropped old backup(s), keeping $BACKUP_KEEP"
+    return 0
+}
+
+newest_backup_age() {   # days since the newest backup, or 9999 if there is none
+    local newest when
+    newest=$(/bin/ls -t "$BACKUP_DIR"/kalla-*.json 2>/dev/null | /usr/bin/head -1)
+    [ -n "$newest" ] || { echo 9999; return; }
+    when=$(/usr/bin/stat -f%m "$newest" 2>/dev/null || echo 0)
+    echo $(( ($(/bin/date +%s) - when) / 86400 ))
+}
+
 # ---------------------------------------------------------------- failing
 
 OLD_EXPIRY=0
@@ -194,7 +303,24 @@ if ! /usr/bin/xcrun devicectl device info lockState \
 fi
 log "phone is reachable"
 
-# -- 2. how long is left? ----------------------------------------------
+# -- 2. the backup, every run ------------------------------------------
+
+# Deliberately before the expiry check, which exits early on most runs. A
+# backup that only happened when a rebuild was due would be a backup twice a
+# week at best.
+if ! back_up_data; then
+    log "backup failed: $BACKUP_PROBLEM"
+    # Not fatal. Re-signing is what keeps the app running at all, and a
+    # failed copy must not stop it — but it is still worth being told.
+    age=$(newest_backup_age)
+    if [ "$age" -ge 9999 ]; then
+        push "Tally couldn't back up" "$BACKUP_PROBLEM. There is no saved backup at all yet."
+    else
+        push "Tally couldn't back up" "$BACKUP_PROBLEM. Last good backup was $age day(s) ago."
+    fi
+fi
+
+# -- 3. how long is left? ----------------------------------------------
 
 BUILT_APP="$DERIVED/Build/Products/Debug-iphoneos/$SCHEME.app"
 if [ -f "$BUILT_APP/embedded.mobileprovision" ]; then
@@ -216,7 +342,7 @@ else
     log "no record of a previous build, rebuilding"
 fi
 
-# -- 3. a clean copy of main -------------------------------------------
+# -- 4. a clean copy of main -------------------------------------------
 
 cleanup                                   # any wreckage from a killed run
 if ! /usr/bin/git -C "$REPO" worktree add --detach "$CHECKOUT" "$BRANCH" \
@@ -225,7 +351,7 @@ if ! /usr/bin/git -C "$REPO" worktree add --detach "$CHECKOUT" "$BRANCH" \
 fi
 log "checked out $BRANCH at $(/usr/bin/git -C "$CHECKOUT" rev-parse --short HEAD)"
 
-# -- 4. force a new profile --------------------------------------------
+# -- 5. force a new profile --------------------------------------------
 
 # Without this the build reuses the profile it already has and the expiry
 # never moves, which is the whole failure this job exists to prevent.
@@ -243,7 +369,7 @@ for dir in "$HOME/Library/Developer/Xcode/UserData/Provisioning Profiles" \
 done
 log "purged $PURGED cached profile(s)"
 
-# -- 5. build, install, launch -----------------------------------------
+# -- 6. build, install, launch -----------------------------------------
 
 BUILD_LOG=$(/usr/bin/mktemp -t tally-rebuild)
 log "building…"
@@ -279,7 +405,7 @@ else
     log "could not launch (phone probably locked) — install still counts"
 fi
 
-# -- 6. did the expiry actually move? ----------------------------------
+# -- 7. did the expiry actually move? ----------------------------------
 
 NEW_EXPIRY=$(expiry_of "$BUILT_APP/embedded.mobileprovision" || echo 0)
 if [ "$NEW_EXPIRY" -le 0 ]; then
