@@ -29,10 +29,22 @@ SCHEME="anynameyoulike"
 PROJECT="anynameyoulike.xcodeproj"
 BRANCH="main"
 
-# Only act inside the last two days of the profile's life. Twice-daily runs
-# then give four chances before the deadline, so one sleeping Mac or absent
-# phone costs nothing.
-REBUILD_WITHIN=$((48 * 3600))
+# Only act inside the last three days of the profile's life. Widened from
+# two: on the university network the phone is unreachable all day, so a
+# window measured in fixed attempts was too narrow.
+REBUILD_WITHIN=$((72 * 3600))
+
+# Retries, for the case the fixed times cannot cover: unreachable inside the
+# window arms a companion agent that tries again every half hour, so the
+# first moment the phone comes back is the moment this runs.
+RETRY_EVERY=1800
+RETRY_CAP=48
+RETRY_FILE=""          # set once STATE is known
+NOTIFIED_FILE=""
+
+# Pushing the moment the window opens would cry wolf three days early. The
+# phone being away only becomes worth saying out loud near the end.
+URGENT_WITHIN=$((24 * 3600))
 LOG_MAX=$((512 * 1024))
 
 # Backups live beside the config, not in the repo.
@@ -44,9 +56,22 @@ NTFY_TOPIC=""
 DEVICE_UDID=""
 
 FORCE=0
-[ "${1:-}" = "--force" ] && FORCE=1
+RETRY_RUN=0
+case "${1:-}" in
+    --force) FORCE=1 ;;
+    --retry) RETRY_RUN=1 ;;
+esac
 
 mkdir -p "$STATE" "$(dirname "$LOG")"
+RETRY_FILE="$STATE/retry"
+NOTIFIED_FILE="$STATE/notified-for"
+
+# The retry agent fires every half hour whether or not anything is waiting
+# for it. Nothing is armed, nothing to do — and it leaves the log alone,
+# because forty-eight "nothing to do" lines a day would bury the real ones.
+if [ "$RETRY_RUN" -eq 1 ] && [ ! -f "$RETRY_FILE" ]; then
+    exit 0
+fi
 
 # ---------------------------------------------------------------- logging
 
@@ -126,6 +151,36 @@ PY
 
 when() { /bin/date -r "$1" '+%A %-d %B, %-I:%M %p'; }
 when_short() { /bin/date -r "$1" '+%A %-I:%M %p'; }
+
+# ---------------------------------------------------------------- retrying
+
+# "<attempts> <deadline>". The deadline is carried so a new profile resets
+# the count rather than inheriting the last one's.
+retry_attempts() {      # retry_attempts <deadline>
+    local saved count against
+    saved=$(/bin/cat "$RETRY_FILE" 2>/dev/null) || { echo 0; return; }
+    count=${saved%% *}
+    against=${saved##* }
+    [ "$against" = "$1" ] || { echo 0; return; }
+    echo "${count:-0}"
+}
+
+arm_retry() { echo "$1 $2" > "$RETRY_FILE"; }      # arm_retry <attempts> <deadline>
+disarm_retry() { /bin/rm -f "$RETRY_FILE"; }
+
+# One push per deadline, not one per retry. A day on campus is forty-eight
+# unreachable runs, and forty-eight identical pushes would be worse than
+# silence.
+push_once() {           # push_once <deadline> <title> <body>
+    local last
+    last=$(/bin/cat "$NOTIFIED_FILE" 2>/dev/null || echo 0)
+    if [ "$last" = "$1" ]; then
+        log "already pushed about this deadline, staying quiet"
+        return 0
+    fi
+    echo "$1" > "$NOTIFIED_FILE"
+    push "$2" "$3"
+}
 
 # ---------------------------------------------------------------- backing up
 
@@ -240,7 +295,8 @@ die() {         # die <short reason>
     log "FAILED: $1"
     local deadline="your next Xcode build"
     [ "$OLD_EXPIRY" -gt 0 ] && deadline=$(when_short "$OLD_EXPIRY")
-    push "Tally couldn't rebuild itself" "$1. Rebuild from Xcode before $deadline."
+    push_once "$OLD_EXPIRY" "Tally couldn't rebuild itself" \
+        "$1. Rebuild from Xcode before $deadline."
     banner "Tally couldn't rebuild itself" "$1"
     cleanup
     exit 1
@@ -287,8 +343,31 @@ if [ -z "$DEVICE_UDID" ]; then
     exit 1
 fi
 
-# -- 1. is the phone there? --------------------------------------------
+# -- 1. how long is left? ----------------------------------------------
 
+# Read first, and off this Mac rather than off the phone: whether to retry
+# depends on how close the deadline is, and that has to be answerable with
+# the phone nowhere in sight.
+BUILT_APP="$DERIVED/Build/Products/Debug-iphoneos/$SCHEME.app"
+if [ -f "$BUILT_APP/embedded.mobileprovision" ]; then
+    OLD_EXPIRY=$(expiry_of "$BUILT_APP/embedded.mobileprovision" || echo 0)
+elif [ -f "$STATE/last-expiry" ]; then
+    OLD_EXPIRY=$(cat "$STATE/last-expiry" 2>/dev/null || echo 0)
+fi
+
+NOW=$(/bin/date +%s)
+LEFT=0
+INSIDE_WINDOW=1
+if [ "$OLD_EXPIRY" -gt 0 ]; then
+    LEFT=$((OLD_EXPIRY - NOW))
+    [ "$LEFT" -gt "$REBUILD_WITHIN" ] && INSIDE_WINDOW=0
+fi
+
+# -- 2. is the phone there? --------------------------------------------
+
+# Asked before any work at all, so a skipped run costs one query and leaves
+# no worktree, no purged profile and no half-finished build behind.
+#
 # `devicectl device info details` is NOT a reachability test: it answers
 # from cached pairing data and exits 0 for a phone that is asleep or on
 # another network, which would send the job on to a build that then fails
@@ -296,14 +375,35 @@ fi
 # lock state needs a live tunnel, so it fails when the phone really is away.
 if ! /usr/bin/xcrun devicectl device info lockState \
         --device "$DEVICE_UDID" --timeout 45 > /dev/null 2>&1; then
-    # Not a failure. The phone is asleep, out of the house, or on another
-    # network, and the next run will find it.
-    log "phone not reachable, leaving it for the next run"
+
+    if [ "$INSIDE_WINDOW" -eq 0 ]; then
+        # Days of slack. The next fixed run will find it.
+        log "phone not reachable, and the deadline is far off — leaving it"
+        disarm_retry
+        exit 0
+    fi
+
+    attempts=$(( $(retry_attempts "$OLD_EXPIRY") + 1 ))
+    if [ "$attempts" -gt "$RETRY_CAP" ]; then
+        log "phone not reachable, and the retry cap of $RETRY_CAP is spent"
+        exit 0
+    fi
+
+    arm_retry "$attempts" "$OLD_EXPIRY"
+    log "phone not reachable, inside the window — retry $attempts/$RETRY_CAP in $((RETRY_EVERY / 60)) min"
+
+    # Worth saying out loud only near the end. Three days out there is
+    # nothing you could usefully do about it yet.
+    if [ "$OLD_EXPIRY" -gt 0 ] && [ "$LEFT" -le "$URGENT_WITHIN" ]; then
+        push_once "$OLD_EXPIRY" "Tally couldn't rebuild itself" \
+            "Your phone has not been reachable. Get it onto the same network as the Mac, or rebuild from Xcode, before $(when_short "$OLD_EXPIRY")."
+    fi
+
     exit 0
 fi
 log "phone is reachable"
 
-# -- 2. the backup, every run ------------------------------------------
+# -- 3. the backup, every run ------------------------------------------
 
 # Deliberately before the expiry check, which exits early on most runs. A
 # backup that only happened when a rebuild was due would be a backup twice a
@@ -320,29 +420,21 @@ if ! back_up_data; then
     fi
 fi
 
-# -- 3. how long is left? ----------------------------------------------
+# -- 4. is a rebuild due? ----------------------------------------------
 
-BUILT_APP="$DERIVED/Build/Products/Debug-iphoneos/$SCHEME.app"
-if [ -f "$BUILT_APP/embedded.mobileprovision" ]; then
-    OLD_EXPIRY=$(expiry_of "$BUILT_APP/embedded.mobileprovision" || echo 0)
-elif [ -f "$STATE/last-expiry" ]; then
-    OLD_EXPIRY=$(cat "$STATE/last-expiry" 2>/dev/null || echo 0)
-fi
-
-NOW=$(/bin/date +%s)
 if [ "$OLD_EXPIRY" -gt 0 ]; then
-    LEFT=$((OLD_EXPIRY - NOW))
     log "current build expires $(when "$OLD_EXPIRY") ($((LEFT / 3600))h left)"
 
-    if [ "$FORCE" -eq 0 ] && [ "$LEFT" -gt "$REBUILD_WITHIN" ]; then
-        log "more than 48h left, nothing to do"
+    if [ "$FORCE" -eq 0 ] && [ "$INSIDE_WINDOW" -eq 0 ]; then
+        log "more than $((REBUILD_WITHIN / 3600))h left, nothing to do"
+        disarm_retry
         exit 0
     fi
 else
     log "no record of a previous build, rebuilding"
 fi
 
-# -- 4. a clean copy of main -------------------------------------------
+# -- 5. a clean copy of main -------------------------------------------
 
 cleanup                                   # any wreckage from a killed run
 if ! /usr/bin/git -C "$REPO" worktree add --detach "$CHECKOUT" "$BRANCH" \
@@ -351,7 +443,7 @@ if ! /usr/bin/git -C "$REPO" worktree add --detach "$CHECKOUT" "$BRANCH" \
 fi
 log "checked out $BRANCH at $(/usr/bin/git -C "$CHECKOUT" rev-parse --short HEAD)"
 
-# -- 5. force a new profile --------------------------------------------
+# -- 6. force a new profile --------------------------------------------
 
 # Without this the build reuses the profile it already has and the expiry
 # never moves, which is the whole failure this job exists to prevent.
@@ -369,7 +461,7 @@ for dir in "$HOME/Library/Developer/Xcode/UserData/Provisioning Profiles" \
 done
 log "purged $PURGED cached profile(s)"
 
-# -- 6. build, install, launch -----------------------------------------
+# -- 7. build, install, launch -----------------------------------------
 
 BUILD_LOG=$(/usr/bin/mktemp -t tally-rebuild)
 log "building…"
@@ -405,7 +497,7 @@ else
     log "could not launch (phone probably locked) — install still counts"
 fi
 
-# -- 7. did the expiry actually move? ----------------------------------
+# -- 8. did the expiry actually move? ----------------------------------
 
 NEW_EXPIRY=$(expiry_of "$BUILT_APP/embedded.mobileprovision" || echo 0)
 if [ "$NEW_EXPIRY" -le 0 ]; then
@@ -419,6 +511,10 @@ if [ "$NEW_EXPIRY" -le "$OLD_EXPIRY" ]; then
 fi
 
 echo "$NEW_EXPIRY" > "$STATE/last-expiry"
+# Done with this deadline: stop the half-hourly agent, and let the next
+# deadline have a push of its own.
+disarm_retry
+/bin/rm -f "$NOTIFIED_FILE"
 log "SUCCEEDED: now good until $(when "$NEW_EXPIRY")"
 push "Tally rebuilt" "Good until $(when "$NEW_EXPIRY")."
 

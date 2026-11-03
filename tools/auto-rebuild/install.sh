@@ -7,7 +7,9 @@ set -euo pipefail
 
 SCRIPT_DIR=$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)
 LABEL="com.tally.rebuild"
+RETRY_LABEL="com.tally.rebuild.retry"
 PLIST="$HOME/Library/LaunchAgents/$LABEL.plist"
+RETRY_PLIST="$HOME/Library/LaunchAgents/$RETRY_LABEL.plist"
 CONFIG_DIR="$HOME/.config/tally-rebuild"
 CONFIG="$CONFIG_DIR/config"
 
@@ -47,12 +49,21 @@ sed -e "s|__SCRIPT__|$SCRIPT_DIR/rebuild.sh|g" \
     -e "s|__HOME__|$HOME|g" \
     "$SCRIPT_DIR/com.tally.rebuild.plist.template" > "$PLIST"
 
+sed -e "s|__SCRIPT__|$SCRIPT_DIR/rebuild.sh|g" \
+    -e "s|__HOME__|$HOME|g" \
+    "$SCRIPT_DIR/com.tally.rebuild.retry.plist.template" > "$RETRY_PLIST"
+
 launchctl bootout "gui/$UID/$LABEL" 2>/dev/null || true
 launchctl bootstrap "gui/$UID" "$PLIST"
 launchctl enable "gui/$UID/$LABEL"
 
+launchctl bootout "gui/$UID/$RETRY_LABEL" 2>/dev/null || true
+launchctl bootstrap "gui/$UID" "$RETRY_PLIST"
+launchctl enable "gui/$UID/$RETRY_LABEL"
+
 echo "installed $PLIST"
-echo "runs at 03:00, 20:00 and at login"
+echo "installed $RETRY_PLIST"
+echo "runs at 03:00, 20:00 and at login; retries every 30 min while armed"
 echo
 # Does launchd actually have the access it needs? A repo under Desktop,
 # Documents or Downloads is walled off from background jobs, and the only

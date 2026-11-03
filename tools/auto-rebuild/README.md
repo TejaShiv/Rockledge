@@ -28,22 +28,28 @@ So the script does two things a manual rebuild does not:
 
 ## What a run does
 
-1. Checks the phone answers over wireless debugging. If not, logs it and
-   exits quietly — asleep or out of the house is normal, not a failure.
-2. **Copies `kalla.json` off the phone** into `~/.config/tally-rebuild/backups/`,
+1. Reads how long the current build has left, off this Mac rather than off
+   the phone, so the next step can be decided with the phone nowhere in
+   sight.
+2. Checks the phone answers over wireless debugging — before any work at
+   all, so a skipped run costs one query and leaves no worktree, no purged
+   profile and no half-finished build behind. If it is away and the deadline
+   is close, it arms the retry agent (see **Schedule**). Asleep or out of
+   the house is normal, not a failure.
+3. **Copies `kalla.json` off the phone** into `~/.config/tally-rebuild/backups/`,
    keeping the last 30. See below.
-3. Reads the expiry of the last build it made. More than 48 hours left means
+4. Reads the expiry of the last build it made. More than 48 hours left means
    there is nothing to do. `--force` skips this.
-4. Checks out `main` into a throwaway git worktree, so whatever you have
+5. Checks out `main` into a throwaway git worktree, so whatever you have
    half-finished in your own folder is never what lands on the phone. It
    never commits, pushes or touches your working tree.
-5. Deletes the cached profiles for `steps.anynameyoulike` (and its UITests
+6. Deletes the cached profiles for `steps.anynameyoulike` (and its UITests
    bundle, which shares the prefix).
-6. Builds for the phone's UDID, installs with `devicectl`, and tries to
+7. Builds for the phone's UDID, installs with `devicectl`, and tries to
    launch so the in-app reminders reschedule. A locked phone refuses the
    launch; the install still counts.
-7. Confirms the new expiry moved. If it did not, the run fails loudly.
-8. Pushes to ntfy — on success and on failure only, never on the quiet
+8. Confirms the new expiry moved. If it did not, the run fails loudly.
+9. Pushes to ntfy — on success and on failure only, never on the quiet
    "nothing to do" runs. Failures also raise a macOS notification, in case
    the phone is the thing that is missing.
 
@@ -98,10 +104,38 @@ knows it can read your pushes, so do not paste it anywhere public.
 
 ## Schedule
 
-03:00, 20:00, and at login. Because the script only acts inside the last 48
-hours, that is four chances before any deadline — one sleeping Mac or absent
-phone costs nothing. launchd also runs a missed calendar job once the Mac
-wakes.
+Two agents.
+
+**`com.tally.rebuild`** at 03:00, 20:00 and at login.
+
+**`com.tally.rebuild.retry`** every 30 minutes, which does nothing at all
+unless the main job armed it. Fixed times are too coarse on their own: on
+the university network the phone is unreachable for the whole working day,
+so three attempts could all land while it is out of sight. When a run finds
+the phone away *and* the deadline is inside the window, it leaves a marker,
+and the retry agent then tries every half hour until the phone comes back,
+the rebuild succeeds, or 48 attempts are spent. Success clears the marker.
+
+The window is 72 hours, so there is most of three days of retrying before
+anything is actually at risk.
+
+### Will the retries fire with the lid shut?
+
+**No.** A closed lid means the Mac is asleep, and launchd does not run
+`StartInterval` jobs while it sleeps — it coalesces them and runs one on
+wake. The same is true of the 03:00 calendar run: missed, then run once the
+Mac is awake again.
+
+That is less of a loss than it sounds, because a sleeping Mac could not
+reach the phone anyway. What the retry actually buys is the case where the
+Mac is **awake and the network changes** — you get home, the phone joins the
+same Wi-Fi, and within half an hour the rebuild happens without you doing
+anything. On campus all day with the lid shut, the first retry fires when
+you next open it.
+
+If you want it to work overnight with the lid down, that needs a scheduled
+wake (`sudo pmset repeat wakeorpoweron MTWRFSU 02:55:00`), which is a
+system-wide change and needs your password, so it is not done here.
 
 ## Checking on it
 
@@ -110,6 +144,7 @@ tail -f ~/Library/Logs/tally-rebuild.log     # what it has been doing
 ls -lt ~/.config/tally-rebuild/backups/      # the copies it has pulled
 ./rebuild.sh --force                         # rebuild right now
 launchctl print gui/$UID/com.tally.rebuild   # is the agent loaded
+cat ~/.local/state/tally-rebuild/retry       # "<attempts> <deadline>" if armed
 ```
 
 A healthy quiet run looks like:

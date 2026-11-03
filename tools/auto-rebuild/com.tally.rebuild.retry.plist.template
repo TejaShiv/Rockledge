@@ -1,0 +1,34 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
+<plist version="1.0">
+<dict>
+	<key>Label</key>
+	<string>com.tally.rebuild.retry</string>
+
+	<!-- Same script, retry mode: it exits immediately unless the main job
+	     armed it, so most of these firings do nothing and cost nothing. -->
+	<key>ProgramArguments</key>
+	<array>
+		<string>__SCRIPT__</string>
+		<string>--retry</string>
+	</array>
+
+	<!-- Every half hour. The point is to catch the moment the phone comes
+	     back onto the same network, not to keep to a timetable. -->
+	<key>StartInterval</key>
+	<integer>1800</integer>
+
+	<!-- Deliberately NOT RunAtLoad: installing should not kick off a build. -->
+
+	<key>StandardOutPath</key>
+	<string>__HOME__/Library/Logs/tally-rebuild.out.log</string>
+	<key>StandardErrorPath</key>
+	<string>__HOME__/Library/Logs/tally-rebuild.err.log</string>
+
+	<key>EnvironmentVariables</key>
+	<dict>
+		<key>PATH</key>
+		<string>/usr/bin:/bin:/usr/sbin:/sbin</string>
+	</dict>
+</dict>
+</plist>
