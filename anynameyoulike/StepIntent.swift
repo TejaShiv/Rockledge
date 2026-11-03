@@ -122,6 +122,26 @@ struct WriteStepsIntent: AppIntent {
 /// hoping one generalises. Every phrase carries ${applicationName}, which
 /// resolves at runtime to the display name — Tally.
 struct StepShortcuts: AppShortcutsProvider {
+
+    /// Deliberately short.
+    ///
+    /// Twenty phrases shipped and one matched. Every phrase was trained and
+    /// archived by the build, so nothing was being dropped — the failures
+    /// were in the phrasing itself, and a near-duplicate that never wins
+    /// still dilutes the model that decides between the rest. Three patterns
+    /// accounted for almost all of it:
+    ///
+    /// - Narration ("Had lunch in Tally", "I used eggs in Tally"). Siri
+    ///   treats a past-tense statement as a sentence rather than a command,
+    ///   and "in Tally" at the end of one reads as a place — which is where
+    ///   the hotel results came from.
+    /// - Patterns the system already owns. "Add ⟨thing⟩ to ⟨name⟩" is how
+    ///   you put something on a reminders list, and that intent wins.
+    /// - A parameter wedged inside a split verb ("Take ⟨item⟩ off in Tally"),
+    ///   which leaves the matcher nothing stable either side of the slot.
+    ///
+    /// What is left is imperative, verb-first, and distinct from its
+    /// neighbours.
     static var appShortcuts: [AppShortcut] {
         AppShortcut(
             intent: TopUpStepsIntent(),
@@ -138,60 +158,50 @@ struct StepShortcuts: AppShortcutsProvider {
         AppShortcut(
             intent: LogMealIntent(),
             phrases: [
-                // Imperative first. A verb at the front marks the utterance
-                // as a command; narration gets read as a sentence about the
-                // day and matched against something else.
+                // The one phrase that demonstrably matched. Everything else
+                // here is chosen not to compete with it.
                 "Log \(\.$meal) in \(.applicationName)",
-                "Log my \(\.$meal) in \(.applicationName)",
                 "Record \(\.$meal) in \(.applicationName)",
-                "Add \(\.$meal) to \(.applicationName)",
-                // Narration, kept as fallbacks. "in" rather than "with":
-                // Tally is a plausible name for a person, and "had lunch
-                // with Tally" is a sentence about company, not an app.
-                "Had \(\.$meal) in \(.applicationName)",
-                "Had my \(\.$meal) in \(.applicationName)",
-                "I had \(\.$meal) in \(.applicationName)",
                 // No meal named, so the parameter goes unresolved and Siri
-                // asks which one — the picker, reachable without having to
-                // remember a name.
-                "Log items in \(.applicationName)",
+                // asks which one — the picker, without having to remember a
+                // name.
                 "Log a meal in \(.applicationName)",
             ],
             shortTitle: "Log a meal",
             systemImageName: "fork.knife"
         )
-
         AppShortcut(
             intent: LogItemIntent(),
             phrases: [
-                // A plain imperative that is not already spoken for. "Take
-                // off" leads nowhere good: it belongs to alarms and flights
-                // before it belongs to groceries.
-                "Subtract \(\.$item) in \(.applicationName)",
-                "Take \(\.$item) off in \(.applicationName)",
-                // "Log" belongs to meals now: registering it here too made
-                // one phrase match two intents, and an item and a meal can
+                // "Log" belongs to meals: registering it here too made one
+                // utterance match two intents, and an item and a meal can
                 // easily share a name.
-                "Used \(\.$item) in \(.applicationName)",
-                "I used \(\.$item) in \(.applicationName)",
+                "Subtract \(\.$item) in \(.applicationName)",
+                "Use up \(\.$item) in \(.applicationName)",
             ],
             shortTitle: "Log an item",
             systemImageName: "minus.circle"
         )
-
         AppShortcut(
             intent: WhoseTurnIntent(),
             phrases: [
-                // Verb first, as everywhere else: those are the ones that
-                // match. The bare question is kept behind them.
                 "Check whose turn it is in \(.applicationName)",
                 "Check the bins in \(.applicationName)",
-                "Check the bin rota in \(.applicationName)",
-                "Whose turn is it in \(.applicationName)",
-                "Whose bin week is it in \(.applicationName)",
             ],
             shortTitle: "Whose turn",
             systemImageName: "trash"
+        )
+        AppShortcut(
+            intent: CanvasDueIntent(),
+            phrases: [
+                "Check what's due in \(.applicationName)",
+                "Check my assignments in \(.applicationName)",
+                // A bare question is the weaker form, for the reason above,
+                // so it sits behind the imperatives rather than leading.
+                "What's due in \(.applicationName)",
+            ],
+            shortTitle: "What's due",
+            systemImageName: "graduationcap"
         )
     }
 }

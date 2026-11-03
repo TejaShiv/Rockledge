@@ -1,3 +1,4 @@
+import AppIntents
 import Foundation
 import SwiftUI
 import UserNotifications
@@ -113,6 +114,12 @@ final class Pantry {
             $0.useLog = log
             $0.meals = meals
         }
+
+        // The names Siri can hear come from these two lists. Without this
+        // the system keeps whatever vocabulary it captured at install time,
+        // so anything added since could never be said out loud — which is
+        // why only the meals that happened to exist then ever matched.
+        StepShortcuts.updateAppShortcutParameters()
     }
 
     // MARK: Rate

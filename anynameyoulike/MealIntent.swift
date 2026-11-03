@@ -15,7 +15,21 @@ struct MealEntity: AppEntity {
     }
 }
 
-nonisolated struct MealQuery: EntityQuery {
+/// `EntityStringQuery`, not plain `EntityQuery`: the string variant is the
+/// hook Siri uses to resolve a spoken name against real data. Without it,
+/// matching rests entirely on the vocabulary snapshot the system took at
+/// install time, so a meal added later could never be said out loud.
+nonisolated struct MealQuery: EntityStringQuery {
+
+    @MainActor
+    func entities(matching text: String) async throws -> [MealEntity] {
+        let wanted = text.trimmingCharacters(in: .whitespacesAndNewlines)
+        return all().filter {
+            $0.name.localizedCaseInsensitiveCompare(wanted) == .orderedSame
+                || $0.name.localizedCaseInsensitiveContains(wanted)
+        }
+    }
+
     @MainActor
     func entities(for identifiers: [UUID]) async throws -> [MealEntity] {
         all().filter { identifiers.contains($0.id) }
@@ -46,7 +60,17 @@ struct GroceryEntity: AppEntity {
     }
 }
 
-nonisolated struct GroceryQuery: EntityQuery {
+nonisolated struct GroceryQuery: EntityStringQuery {
+
+    @MainActor
+    func entities(matching text: String) async throws -> [GroceryEntity] {
+        let wanted = text.trimmingCharacters(in: .whitespacesAndNewlines)
+        return all().filter {
+            $0.name.localizedCaseInsensitiveCompare(wanted) == .orderedSame
+                || $0.name.localizedCaseInsensitiveContains(wanted)
+        }
+    }
+
     @MainActor
     func entities(for identifiers: [UUID]) async throws -> [GroceryEntity] {
         all().filter { identifiers.contains($0.id) }

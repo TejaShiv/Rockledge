@@ -1,3 +1,4 @@
+import AppIntents
 import SwiftUI
 import UserNotifications
 
@@ -195,6 +196,10 @@ struct ContentView: View {
             // Counted after the whole launch pass, once everything that
             // schedules has had its turn.
             await Shared.notifications.measure()
+
+            // And the spoken vocabulary, in case the document changed
+            // without the app running — a restored backup, say.
+            StepShortcuts.updateAppShortcutParameters()
         }
     }
 
