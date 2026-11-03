@@ -88,7 +88,7 @@ nonisolated struct TrashRota: Codable {
 
     /// Whose bins are next out.
     func activePerson(at date: Date = Date()) -> String {
-        person(weeksAhead: activeWeek(at: date) - weekIndex(of: date))
+        person(weeksAhead: activeWeek(at: date) - weekIndex(of: date), at: date)
     }
 
     func isMyActiveWeek(at date: Date = Date()) -> Bool {
@@ -135,10 +135,18 @@ nonisolated struct TrashRota: Codable {
         return Int((Double(days) / 7).rounded())
     }
 
-    func person(weeksAhead: Int = 0) -> String {
+    /// Whose week it is, `weeksAhead` weeks from the one containing `date`.
+    ///
+    /// `date` is a parameter rather than always today because the accessors
+    /// above take one: without it `activePerson(at:)` would answer partly
+    /// from the date handed in and partly from the real clock, which is
+    /// correct in the app — they are the same date — and impossible to check
+    /// for any other moment. That is exactly the kind of thing the card, the
+    /// 8pm reminder and Siri could quietly disagree about.
+    func person(weeksAhead: Int = 0, at date: Date = Date()) -> String {
         guard !people.isEmpty else { return "—" }
         let n = people.count
-        let index = ((anchorIndex + currentWeek + weeksAhead) % n + n) % n
+        let index = ((anchorIndex + weekIndex(of: date) + weeksAhead) % n + n) % n
         return people[index]
     }
 

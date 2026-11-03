@@ -29,8 +29,8 @@ nonisolated struct NotificationCensus: Equatable {
     var takenAt: Date
 
     enum Pressure {
-        case fine           // under 50
-        case tight          // 50 to 57
+        case fine           // under 56
+        case tight          // 56 to 57
         case critical       // above 57
 
         @MainActor
@@ -43,9 +43,16 @@ nonisolated struct NotificationCensus: Equatable {
         }
     }
 
+    /// Orange starts at 56, not 50.
+    ///
+    /// The app's structural maximum is 55 — forty Canvas, twelve trash, two
+    /// signing, one nightly — so a band opening at 50 would have been orange
+    /// through an ordinary busy week. A warning that is on during normal
+    /// operation is not a warning. At 56 it can only mean something has been
+    /// added that the budgets do not account for.
     var pressure: Pressure {
         if total > 57 { return .critical }
-        if total >= 50 { return .tight }
+        if total >= 56 { return .tight }
         return .fine
     }
 

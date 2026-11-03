@@ -70,14 +70,15 @@ struct NotificationBudgetTests {
 
     // MARK: How loudly it reads
 
-    @Test func staysQuietBelowFifty() {
-        for total in [0, 20, 49] {
+    /// Including 55, which is everything the app can schedule at once.
+    @Test func staysQuietThroughTheBusiestNormalWeek() {
+        for total in [0, 20, 49, 50, 55] {
             #expect(census(total).pressure == .fine, "\(total) should be quiet")
         }
     }
 
-    @Test func warnsFromFiftyToFiftySeven() {
-        for total in [50, 55, 57] {
+    @Test func warnsFromFiftySixToFiftySeven() {
+        for total in [56, 57] {
             #expect(census(total).pressure == .tight, "\(total) should warn")
         }
     }
@@ -114,7 +115,9 @@ struct NotificationBudgetTests {
 
         #expect(census.total == 55)
         #expect(census.total < NotificationCensus.limit)
-        #expect(census.pressure == .tight)   // close enough to deserve orange
+        // Healthy, not a warning: this is as loaded as the app can get on
+        // its own, so orange here would mean orange most weeks.
+        #expect(census.pressure == .fine)
     }
 
     private func census(_ total: Int) -> NotificationCensus {

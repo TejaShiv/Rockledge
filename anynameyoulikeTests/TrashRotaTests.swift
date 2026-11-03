@@ -360,3 +360,119 @@ struct TrashRotaTests {
         #expect(r.spokenTurn().contains("nobody"))
     }
 }
+
+/// Which person the card, the reminder and Siri name across a weekend.
+///
+/// Weeks run Monday to Sunday, so the bins going out on Sunday night are for
+/// Monday's collection and belong to the *next* week's person. All three
+/// surfaces derive that from `nextCollection`, which counts today — so once
+/// Thursday's collection is done, everything points at Monday's.
+///
+/// Written because the three could drift apart silently: the card reads
+/// `activePerson`, the reminder works from the collection date, and Siri
+/// reads `spokenTurn`. Nothing would fail if one of them stopped agreeing.
+struct TrashWeekendTests {
+
+    private var cal: Calendar {
+        var c = Calendar(identifier: .gregorian)
+        c.firstWeekday = 2
+        c.timeZone = TimeZone(identifier: "America/New_York")!
+        return c
+    }
+
+    /// November 2026: Mon 9 … Thu 12, Fri 13, Sat 14, Sun 15, Mon 16.
+    private func at(_ day: Int, _ hour: Int) -> Date {
+        cal.date(from: DateComponents(year: 2026, month: 11, day: day, hour: hour))!
+    }
+
+    /// A rota anchored to the week containing `when`, so people[0] holds it.
+    private func rota(at when: Date) -> TrashRota {
+        var r = TrashRota()
+        r.people = ["A", "B", "C"]
+        r.anchorIndex = 0
+        r.anchorMonday = TrashRota.mondayOf(when)
+        return r
+    }
+
+    /// How many weeks ahead of the calendar week the card is pointing.
+    private func roll(_ when: Date) -> Int {
+        let r = rota(at: when)
+        return r.activeWeek(at: when) - r.weekIndex(of: when)
+    }
+
+    // MARK: The roll
+
+    /// Monday to Thursday the card names the week you are standing in.
+    @Test func staysOnThisWeekUntilThursdayIsDone() {
+        #expect(roll(at(9, 9)) == 0)        // Monday, collection day
+        #expect(roll(at(11, 19)) == 0)      // Wednesday evening, bins out
+        #expect(roll(at(12, 9)) == 0)       // Thursday, collection day
+    }
+
+    /// From Friday both of this week's collections have gone, so the card is
+    /// already talking about Monday's — which is next week's person.
+    @Test func rollsForwardOnceThursdayIsPast() {
+        #expect(roll(at(13, 12)) == 1)      // Friday
+        #expect(roll(at(14, 12)) == 1)      // Saturday
+        #expect(roll(at(15, 10)) == 1)      // Sunday morning
+        #expect(roll(at(15, 19)) == 1)      // Sunday evening, bins out tonight
+        #expect(roll(at(15, 23)) == 1)      // Sunday, late
+    }
+
+    /// And back to zero on Monday, naming the same person it named on
+    /// Sunday — the roll is a change of label, never of person.
+    @Test func mondayNamesWhoeverSundayPromised() {
+        let sunday = at(15, 19)
+        let monday = at(16, 9)
+
+        // One rota, so both dates are measured against the same anchor.
+        let r = rota(at: sunday)
+
+        #expect(roll(sunday) == 1)
+        #expect(roll(monday) == 0)
+        #expect(r.weekIndex(of: sunday) + 1 == r.weekIndex(of: monday))
+
+        // Sunday's "next week" and Monday's "this week" are the same person:
+        // the roll changes the label, never who is up.
+        #expect(r.activePerson(at: sunday) == r.activePerson(at: monday))
+    }
+
+    // MARK: What it says
+
+    @Test func labelsTheRollSoItDoesNotReadAsASkip() {
+        let r = rota(at: at(15, 19))
+
+        #expect(r.activeWeekLabel(at: at(12, 9)) == "this week")
+        #expect(r.activeWeekLabel(at: at(15, 19)) == "next week")
+    }
+
+    /// The card says which collection those bins are for, so "next week"
+    /// has something concrete attached to it.
+    @Test func namesTheCollectionTheBinsAreFor() {
+        let r = rota(at: at(15, 19))
+
+        #expect(r.nextCollectionText(at: at(15, 19)).contains("mon"))
+        #expect(r.nextCollectionText(at: at(11, 19)).contains("thu"))
+    }
+
+    /// Siri reads from the same accessor as the card, so the two cannot
+    /// disagree about who is up.
+    @Test func siriAgreesWithTheCard() {
+        var r = rota(at: at(15, 19))
+        r.me = 0                            // "A" is me
+
+        let sundayEvening = at(15, 19)
+        let spoken = r.spokenTurn(at: sundayEvening)
+        let onTheCard = r.activePerson(at: sundayEvening)
+
+        #expect(spoken.lowercased().contains("next week"))
+        // Either it names them, or it says they are mine — and they are only
+        // mine when the card says so too.
+        if r.isMyActiveWeek(at: sundayEvening) {
+            #expect(spoken.contains("yours"))
+            #expect(onTheCard == r.people[r.me])
+        } else {
+            #expect(spoken.contains(onTheCard))
+        }
+    }
+}
