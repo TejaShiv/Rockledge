@@ -6,6 +6,7 @@ struct TransitDashboard: View {
     @Environment(\.scenePhase) private var scenePhase
 
     private var transit: Transit { Shared.transit }
+    private var arrival: ArrivalAlert { Shared.arrival }
     private var motion: MotionTilt { Shared.motion }
     private let haptics = Shared.haptics
 
@@ -48,6 +49,7 @@ struct TransitDashboard: View {
 
                 ScrollView {
                     VStack(spacing: 12) {
+                        arrivalPanel
                         nextPanel
                         if !transit.alerts.isEmpty { alertsPanel }
                         pickerPanel
@@ -143,6 +145,104 @@ struct TransitDashboard: View {
                 longitudinalMeters: 900
             )
         )
+    }
+
+    // MARK: Waking you up at the right stop
+
+    /// Armed against one stop at a time, and visible the whole time it is
+    /// set — an alert you cannot see is one you cannot trust to call off.
+    @ViewBuilder
+    private var arrivalPanel: some View {
+        if let armed = arrival.watch {
+            VStack(alignment: .leading, spacing: 10) {
+                HStack(spacing: 8) {
+                    Image(systemName: "bell.badge.fill")
+                        .font(.system(size: 12, weight: .black))
+                        .foregroundStyle(Palette.redHot)
+
+                    Text("alert set")
+                        .font(.system(size: 9, weight: .black))
+                        .tracking(1.6)
+                        .foregroundStyle(Palette.redHot)
+
+                    Spacer(minLength: 8)
+
+                    Button {
+                        haptics.soft()
+                        arrival.cancel()
+                    } label: {
+                        Text("cancel")
+                            .font(.system(size: 9, weight: .black))
+                            .tracking(1.2)
+                            .foregroundStyle(Palette.bone.opacity(0.9))
+                            .padding(.horizontal, 12)
+                            .padding(.vertical, 6)
+                            .background(Capsule().fill(Palette.steel))
+                    }
+                    .buttonStyle(.plain)
+                }
+
+                Text(armed.name)
+                    .font(.system(size: 17, weight: .heavy))
+                    .lineLimit(2)
+                    .foregroundStyle(Palette.bone)
+
+                Text("your phone will wake you about half a mile out, even locked")
+                    .font(.system(size: 11, weight: .medium))
+                    .foregroundStyle(Palette.bone.opacity(0.4))
+                    .fixedSize(horizontal: false, vertical: true)
+            }
+            .padding(20)
+            .frame(maxWidth: .infinity, alignment: .leading)
+            .glassBackdrop(cornerRadius: 28, tint: Palette.redHot.opacity(0.10))
+
+        } else if let stop = transit.stop {
+            VStack(alignment: .leading, spacing: 10) {
+                Text("wake me near a stop")
+                    .font(.system(size: 9, weight: .black))
+                    .tracking(1.6)
+                    .foregroundStyle(Palette.bone.opacity(0.3))
+
+                HStack(spacing: 12) {
+                    Text(stop.name)
+                        .font(.system(size: 14, weight: .bold))
+                        .lineLimit(2)
+                        .foregroundStyle(Palette.bone.opacity(0.85))
+
+                    Spacer(minLength: 8)
+
+                    Button {
+                        haptics.commit()
+                        arrival.arm(stop)
+                    } label: {
+                        Group {
+                            if arrival.isArming {
+                                ProgressView().controlSize(.mini).tint(Palette.ink)
+                            } else {
+                                Text("go")
+                                    .font(.system(size: 12, weight: .black))
+                                    .tracking(1.4)
+                            }
+                        }
+                        .frame(width: 52, height: 32)
+                        .foregroundStyle(Palette.ink)
+                        .background(Capsule().fill(Palette.redHot.opacity(0.9)))
+                    }
+                    .buttonStyle(.plain)
+                    .disabled(arrival.isArming)
+                }
+
+                if let note = arrival.note {
+                    Text(note)
+                        .font(.system(size: 11, weight: .bold))
+                        .foregroundStyle(Palette.redHot.opacity(0.85))
+                        .fixedSize(horizontal: false, vertical: true)
+                }
+            }
+            .padding(20)
+            .frame(maxWidth: .infinity, alignment: .leading)
+            .glassBackdrop(cornerRadius: 28, tint: Palette.bone.opacity(0.06))
+        }
     }
 
     // MARK: Picking a stop
@@ -355,17 +455,20 @@ struct TransitDashboard: View {
                 region = context.region
             }
 
-            if peek != nil {
-                // Everything the panel does not cover dismisses it.
-                Rectangle()
-                    .fill(.clear)
-                    .contentShape(Rectangle())
-                    .onTapGesture { closePeek() }
-            }
-
             if let stop = peek {
                 peekPanel(for: stop, expanded: expanded)
                     .transition(.move(edge: .bottom).combined(with: .opacity))
+                    // Closed by its own button or by dragging it down. There
+                    // used to be a transparent sheet across the whole map to
+                    // catch a tap anywhere outside the panel, and it
+                    // swallowed every pan and pinch with it: the map could
+                    // not be moved at all while the panel was up.
+                    .gesture(
+                        DragGesture(minimumDistance: 20)
+                            .onEnded { drag in
+                                if drag.translation.height > 40 { closePeek() }
+                            }
+                    )
             }
         }
         .overlay(alignment: .topTrailing) { sizeToggle(expanded: expanded) }

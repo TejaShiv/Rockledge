@@ -87,12 +87,13 @@ nonisolated enum Store {
 
         /// Named sets of portions, for logging a whole meal at once.
         var meals: [Meal] = []
+        var arrivalWatch: ArrivalWatch?
 
         init() {}
 
         enum CodingKeys: String, CodingKey {
             case version, savedAt, groceryItems, useLog, trashRota, stepLedger
-            case transit, transitHome, meals
+            case transit, transitHome, meals, arrivalWatch
         }
 
         init(from decoder: Decoder) throws {
@@ -111,6 +112,7 @@ nonisolated enum Store {
             transit = value(.transit, TransitSnapshot())
             transitHome = value(.transitHome, TransitSnapshot())
             meals = value(.meals, [])
+            arrivalWatch = value(.arrivalWatch, nil)
         }
     }
 

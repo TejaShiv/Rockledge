@@ -16,6 +16,13 @@ final class NotificationPresenter: NSObject, UNUserNotificationCenterDelegate {
         didReceive response: UNNotificationResponse
     ) async {
         let category = response.notification.request.content.categoryIdentifier
+
+        // Called off from the lock screen, without opening the app.
+        if response.actionIdentifier == ArrivalAlert.cancelAction {
+            await MainActor.run { Shared.arrival.cancel() }
+            return
+        }
+
         guard category == NightlyReminder.category,
               response.actionIdentifier == UNNotificationDefaultActionIdentifier
         else { return }
@@ -32,6 +39,13 @@ struct anynameyoulikeApp: App {
 
     init() {
         UNUserNotificationCenter.current().delegate = presenter
+        UNUserNotificationCenter.current().setNotificationCategories(
+            [ArrivalAlert.notificationCategory]
+        )
+        // Touched here on purpose: a region crossing can launch the app
+        // straight into the background, and the alert has to be listening
+        // before that launch finishes, not when a screen first appears.
+        _ = Shared.arrival
         // Has to happen before launch finishes, or the scheduler rejects the
         // identifier for the rest of the process.
         CanvasBackground.register()

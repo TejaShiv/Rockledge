@@ -15,6 +15,11 @@
 	<!-- When-in-use only, and only asked for when the MBTA screen opens.
 	     There is no "always" key here on purpose: the app has no reason to
 	     know where you are while it is closed. -->
+	<!-- Only ever requested when you arm an arrival alert, and only so the
+	     system can wake the app when you reach the stop. Monitoring stops
+	     the moment the alert fires or you cancel it. -->
+	<key>NSLocationAlwaysAndWhenInUseUsageDescription</key>
+	<string>Used only while an arrival alert is set, so your phone can wake you when you are near your stop even if it is locked. Nothing is tracked otherwise.</string>
 	<key>NSLocationWhenInUseUsageDescription</key>
 	<string>Finds the nearest bus stop so the app can show you the next arrivals. Only used while the MBTA screen is open.</string>
 
