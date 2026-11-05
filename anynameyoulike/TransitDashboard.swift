@@ -7,6 +7,13 @@ struct TransitDashboard: View {
 
     private var transit: Transit { Shared.transit }
     private var arrival: ArrivalAlert { Shared.arrival }
+    private var finder: StopFinder { Shared.stopFinder }
+
+    /// The stop the alert will be set for. Starts as whichever stop the
+    /// screen is showing, and a search replaces it.
+    @State private var target: TransitStop?
+    @State private var searching = false
+    @FocusState private var searchFocused: Bool
     private var motion: MotionTilt { Shared.motion }
     private let haptics = Shared.haptics
 
@@ -196,40 +203,82 @@ struct TransitDashboard: View {
             .frame(maxWidth: .infinity, alignment: .leading)
             .glassBackdrop(cornerRadius: 28, tint: Palette.redHot.opacity(0.10))
 
-        } else if let stop = transit.stop {
-            VStack(alignment: .leading, spacing: 10) {
-                Text("wake me near a stop")
-                    .font(.system(size: 9, weight: .black))
-                    .tracking(1.6)
-                    .foregroundStyle(Palette.bone.opacity(0.3))
+        } else {
+            VStack(alignment: .leading, spacing: 12) {
+                HStack {
+                    Text("wake me near a stop")
+                        .font(.system(size: 9, weight: .black))
+                        .tracking(1.6)
+                        .foregroundStyle(Palette.bone.opacity(0.3))
 
-                HStack(spacing: 12) {
-                    Text(stop.name)
-                        .font(.system(size: 14, weight: .bold))
-                        .lineLimit(2)
-                        .foregroundStyle(Palette.bone.opacity(0.85))
+                    Spacer()
 
-                    Spacer(minLength: 8)
-
+                    // The nearby list only reaches as far as the stops around
+                    // you, and the stop you want to be woken at is by
+                    // definition the one you are not near yet.
                     Button {
-                        haptics.commit()
-                        arrival.arm(stop)
-                    } label: {
-                        Group {
-                            if arrival.isArming {
-                                ProgressView().controlSize(.mini).tint(Palette.ink)
-                            } else {
-                                Text("go")
-                                    .font(.system(size: 12, weight: .black))
-                                    .tracking(1.4)
-                            }
+                        haptics.soft()
+                        withAnimation(.easeInOut(duration: 0.2)) {
+                            searching.toggle()
                         }
-                        .frame(width: 52, height: 32)
-                        .foregroundStyle(Palette.ink)
-                        .background(Capsule().fill(Palette.redHot.opacity(0.9)))
+                        searchFocused = searching
+                        if searching { Task { await finder.loadIfNeeded() } }
+                    } label: {
+                        HStack(spacing: 5) {
+                            Image(systemName: searching
+                                  ? "xmark" : "magnifyingglass")
+                                .font(.system(size: 9, weight: .black))
+                            Text(searching ? "close" : "search any stop")
+                                .font(.system(size: 9, weight: .black))
+                                .tracking(1.1)
+                        }
+                        .foregroundStyle(Palette.bone.opacity(0.6))
+                        .padding(.horizontal, 10)
+                        .padding(.vertical, 5)
+                        .background(Capsule().fill(Palette.steel))
                     }
                     .buttonStyle(.plain)
-                    .disabled(arrival.isArming)
+                }
+
+                if searching { searchField }
+
+                if let stop = chosen {
+                    HStack(spacing: 12) {
+                        VStack(alignment: .leading, spacing: 2) {
+                            Text(stop.name)
+                                .font(.system(size: 14, weight: .bold))
+                                .lineLimit(2)
+                                .foregroundStyle(Palette.bone.opacity(0.85))
+
+                            if let away = metres(to: stop) {
+                                Text(away)
+                                    .font(.system(size: 10, weight: .black))
+                                    .foregroundStyle(Palette.bone.opacity(0.3))
+                            }
+                        }
+
+                        Spacer(minLength: 8)
+
+                        Button {
+                            haptics.commit()
+                            arrival.arm(stop)
+                        } label: {
+                            Group {
+                                if arrival.isArming {
+                                    ProgressView().controlSize(.mini).tint(Palette.ink)
+                                } else {
+                                    Text("go")
+                                        .font(.system(size: 12, weight: .black))
+                                        .tracking(1.4)
+                                }
+                            }
+                            .frame(width: 52, height: 32)
+                            .foregroundStyle(Palette.ink)
+                            .background(Capsule().fill(Palette.redHot.opacity(0.9)))
+                        }
+                        .buttonStyle(.plain)
+                        .disabled(arrival.isArming)
+                    }
                 }
 
                 if let note = arrival.note {
@@ -242,6 +291,95 @@ struct TransitDashboard: View {
             .padding(20)
             .frame(maxWidth: .infinity, alignment: .leading)
             .glassBackdrop(cornerRadius: 28, tint: Palette.bone.opacity(0.06))
+        }
+    }
+
+    /// The stop the go button will arm: whatever was searched for, else the
+    /// one the screen is already showing.
+    private var chosen: TransitStop? { target ?? transit.stop }
+
+    private var searchField: some View {
+        VStack(alignment: .leading, spacing: 8) {
+            HStack(spacing: 8) {
+                Image(systemName: "magnifyingglass")
+                    .font(.system(size: 11, weight: .black))
+                    .foregroundStyle(Palette.bone.opacity(0.3))
+
+                TextField("", text: Binding(
+                    get: { finder.query },
+                    set: { finder.query = $0 }
+                ))
+                .focused($searchFocused)
+                .textInputAutocapitalization(.never)
+                .autocorrectionDisabled()
+                .font(.system(size: 14, weight: .bold))
+                .foregroundStyle(Palette.bone)
+                .overlay(alignment: .leading) {
+                    if finder.query.isEmpty {
+                        Text("stop name, e.g. ruggles")
+                            .font(.system(size: 14, weight: .bold))
+                            .foregroundStyle(Palette.bone.opacity(0.25))
+                            .allowsHitTesting(false)
+                    }
+                }
+
+                if finder.isLoading {
+                    ProgressView().controlSize(.mini).tint(Palette.bone.opacity(0.4))
+                }
+            }
+            .padding(.horizontal, 12)
+            .padding(.vertical, 10)
+            .background(
+                RoundedRectangle(cornerRadius: 14, style: .continuous)
+                    .fill(Palette.steel.opacity(0.6))
+            )
+
+            if let problem = finder.problem {
+                Text(problem)
+                    .font(.system(size: 11, weight: .bold))
+                    .foregroundStyle(Palette.redHot.opacity(0.8))
+            }
+
+            let hits = finder.results(near: transit.origin)
+            if !hits.isEmpty {
+                VStack(spacing: 0) {
+                    ForEach(hits.prefix(6)) { stop in
+                        Button {
+                            haptics.soft()
+                            target = stop
+                            finder.query = ""
+                            searchFocused = false
+                            withAnimation(.easeInOut(duration: 0.2)) {
+                                searching = false
+                            }
+                        } label: {
+                            HStack(spacing: 10) {
+                                Text(stop.name)
+                                    .font(.system(size: 13, weight: .bold))
+                                    .lineLimit(1)
+                                    .foregroundStyle(Palette.bone.opacity(0.8))
+
+                                Spacer(minLength: 8)
+
+                                if let away = metres(to: stop) {
+                                    Text(away)
+                                        .font(.system(size: 10, weight: .black)
+                                            .monospacedDigit())
+                                        .foregroundStyle(Palette.bone.opacity(0.3))
+                                }
+                            }
+                            .padding(.vertical, 8)
+                            .contentShape(Rectangle())
+                        }
+                        .buttonStyle(.plain)
+                    }
+                }
+            } else if finder.query.count >= 2, !finder.isLoading {
+                Text("nothing matching")
+                    .font(.system(size: 12, weight: .bold))
+                    .foregroundStyle(Palette.bone.opacity(0.3))
+                    .padding(.vertical, 6)
+            }
         }
     }
 

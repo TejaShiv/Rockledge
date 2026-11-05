@@ -169,7 +169,9 @@ nonisolated enum MBTA {
 
     // MARK: Requests
 
-    private static func get(_ path: String, _ query: [String: String]) async throws -> Data {
+    private static func get(_ path: String,
+                            _ query: [String: String],
+                            timeout: TimeInterval = 12) async throws -> Data {
         var components = URLComponents(string: base + path)!
         components.queryItems = query
             .sorted { $0.key < $1.key }
@@ -177,7 +179,7 @@ nonisolated enum MBTA {
 
         var request = URLRequest(url: components.url!)
         request.setValue("application/vnd.api+json", forHTTPHeaderField: "Accept")
-        request.timeoutInterval = 12
+        request.timeoutInterval = timeout
 
         do {
             let (data, response) = try await URLSession.shared.data(for: request)
@@ -221,6 +223,34 @@ nonisolated enum MBTA {
             )
         }
         return paired(found)
+    }
+
+    /// Every stop on the system, for searching by name.
+    ///
+    /// One request: the API caps a page at its own ceiling, but asking for
+    /// more than the total just returns the total. Sparse fieldsets keep it
+    /// to the three things a search needs.
+    static func everyStop() async throws -> [TransitStop] {
+        let data = try await get("/stops", [
+            "filter[route_type]": "0,1,2,3,4",      // every mode, not just bus
+            "fields[stop]": "name,latitude,longitude",
+            "page[limit]": "12000",
+        ], timeout: 45)   // a couple of megabytes, possibly on cellular
+
+        let page = try decoder.decode(Page<StopResource>.self, from: data)
+        return page.data.compactMap { resource -> TransitStop? in
+            guard let lat = resource.attributes.latitude,
+                  let lon = resource.attributes.longitude,
+                  !resource.attributes.name.isEmpty else { return nil }
+
+            // Left unpaired on purpose. Pairing averages the two sides of a
+            // road into one point, which is right for "what is near me" and
+            // wrong here: an alert wants the stop it was given.
+            return TransitStop(
+                id: resource.id, name: resource.attributes.name,
+                latitude: lat, longitude: lon
+            )
+        }
     }
 
     /// The nearest stop, breaking a tie on whichever has a bus coming soonest.

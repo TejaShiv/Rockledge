@@ -11,5 +11,6 @@ enum Shared {
     static let canvas = CanvasBoard()
     static let notifications = NotificationLedger()
     static let arrival = ArrivalAlert()
+    static let stopFinder = StopFinder()
     static let router = Router()
 }
