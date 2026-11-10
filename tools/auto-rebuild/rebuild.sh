@@ -37,8 +37,10 @@ REBUILD_WITHIN=$((72 * 3600))
 # Retries, for the case the fixed times cannot cover: unreachable inside the
 # window arms a companion agent that tries again every half hour, so the
 # first moment the phone comes back is the moment this runs.
-RETRY_EVERY=1800
-RETRY_CAP=48
+RETRY_EVERY=900
+# Enough attempts to cover the whole 72h window at a quarter-hour each,
+# rather than giving up twelve hours into it.
+RETRY_CAP=300
 RETRY_FILE=""          # set once STATE is known
 NOTIFIED_FILE=""
 
@@ -50,6 +52,8 @@ LOG_MAX=$((512 * 1024))
 # Backups live beside the config, not in the repo.
 BACKUP_DIR="$CONFIG_DIR/backups"
 BACKUP_KEEP=30
+# Longest a copy may be before another is pulled.
+BACKUP_EVERY=$((6 * 3600))
 
 NTFY_SERVER="https://ntfy.sh"
 NTFY_TOPIC=""
@@ -83,9 +87,25 @@ rotate_log() {
     /bin/mv -f "$LOG" "$LOG.1"
 }
 
+# The header is written by the first real log line, not on every run.
+#
+# The agent wakes every quarter of an hour, and most of those wakes have
+# nothing to say: the deadline is days off and the run ends in under a
+# second. Announcing all ninety-six of them would bury the handful of lines
+# that matter under a day of noise.
+HEADER_DONE=0
 log() {
+    if [ "$HEADER_DONE" -eq 0 ]; then
+        HEADER_DONE=1
+        printf '%s  %s\n' "$(/bin/date '+%Y-%m-%d %H:%M:%S')" \
+            "--- run started${FORCE:+ }$([ "$FORCE" -eq 1 ] && echo '(forced)')" >> "$LOG"
+    fi
     printf '%s  %s\n' "$(/bin/date '+%Y-%m-%d %H:%M:%S')" "$*" >> "$LOG"
 }
+
+# Proof of life for the quiet runs, so "nothing in the log" can be told
+# apart from "nothing has run". Costs one file write.
+beat() { /bin/date '+%Y-%m-%d %H:%M:%S' > "$STATE/last-run"; }
 
 # --------------------------------------------------------------- notifying
 
@@ -279,6 +299,14 @@ prune_backups() {
     return 0
 }
 
+backup_age_seconds() {  # seconds since the newest backup, or a huge number
+    local newest mtime
+    newest=$(/bin/ls -t "$BACKUP_DIR"/kalla-*.json 2>/dev/null | /usr/bin/head -1)
+    [ -n "$newest" ] || { echo 999999999; return; }
+    mtime=$(/usr/bin/stat -f%m "$newest" 2>/dev/null || echo 0)
+    echo $(( $(/bin/date +%s) - mtime ))
+}
+
 newest_backup_age() {   # days since the newest backup, or 9999 if there is none
     local newest when
     newest=$(/bin/ls -t "$BACKUP_DIR"/kalla-*.json 2>/dev/null | /usr/bin/head -1)
@@ -327,7 +355,7 @@ fi
 trap '/bin/rmdir "$LOCK" 2>/dev/null' EXIT
 
 rotate_log
-log "--- run started${FORCE:+ }$([ $FORCE -eq 1 ] && echo '(forced)')"
+beat
 
 # -- config ------------------------------------------------------------
 
@@ -377,8 +405,9 @@ if ! /usr/bin/xcrun devicectl device info lockState \
         --device "$DEVICE_UDID" --timeout 45 > /dev/null 2>&1; then
 
     if [ "$INSIDE_WINDOW" -eq 0 ]; then
-        # Days of slack. The next fixed run will find it.
-        log "phone not reachable, and the deadline is far off — leaving it"
+        # Days of slack, and another attempt in fifteen minutes. Silent:
+        # this is the overwhelmingly common outcome and saying so every
+        # time would make the log useless.
         disarm_retry
         exit 0
     fi
@@ -403,12 +432,19 @@ if ! /usr/bin/xcrun devicectl device info lockState \
 fi
 log "phone is reachable"
 
-# -- 3. the backup, every run ------------------------------------------
+# -- 3. the backup, at most every few hours ----------------------------
 
 # Deliberately before the expiry check, which exits early on most runs. A
 # backup that only happened when a rebuild was due would be a backup twice a
 # week at best.
-if ! back_up_data; then
+#
+# Rate-limited, though, now that the agent wakes every quarter hour: copying
+# the document ninety-six times a day would pull the phone around for no
+# reason, and thirty kept copies would then span seven hours instead of
+# several days, which is the opposite of what keeping thirty is for.
+if [ "$(backup_age_seconds)" -lt "$BACKUP_EVERY" ] && [ "$FORCE" -eq 0 ]; then
+    : # a recent enough copy already exists
+elif ! back_up_data; then
     log "backup failed: $BACKUP_PROBLEM"
     # Not fatal. Re-signing is what keeps the app running at all, and a
     # failed copy must not stop it — but it is still worth being told.
@@ -423,13 +459,11 @@ fi
 # -- 4. is a rebuild due? ----------------------------------------------
 
 if [ "$OLD_EXPIRY" -gt 0 ]; then
-    log "current build expires $(when "$OLD_EXPIRY") ($((LEFT / 3600))h left)"
-
     if [ "$FORCE" -eq 0 ] && [ "$INSIDE_WINDOW" -eq 0 ]; then
-        log "more than $((REBUILD_WITHIN / 3600))h left, nothing to do"
         disarm_retry
         exit 0
     fi
+    log "current build expires $(when "$OLD_EXPIRY") ($((LEFT / 3600))h left)"
 else
     log "no record of a previous build, rebuilding"
 fi

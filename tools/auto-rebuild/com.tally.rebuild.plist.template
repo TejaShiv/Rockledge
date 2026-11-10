@@ -12,17 +12,20 @@
 
 	<!-- Twice a day. The script does nothing until the profile is inside
 	     its last 48 hours, so this is four chances before any deadline. -->
-	<key>StartCalendarInterval</key>
-	<array>
-		<dict>
-			<key>Hour</key><integer>3</integer>
-			<key>Minute</key><integer>0</integer>
-		</dict>
-		<dict>
-			<key>Hour</key><integer>20</integer>
-			<key>Minute</key><integer>0</integer>
-		</dict>
-	</array>
+	<!-- Every quarter of an hour, not twice a day.
+
+	     The phone answers a pairing query maybe half the time it is sitting
+	     on the same router: its radio sleeps, and the tunnel comes back only
+	     once it has been awake recently. Two scheduled attempts a day turn a
+	     coin flip into a real chance of missing a whole deadline, and that is
+	     what happened — the window opened and closed with no run inside it.
+	     Ninety-six attempts cost a second each and make missing it unlikely.
+
+	     StartInterval also survives a sleeping Mac better than a calendar
+	     entry: launchd runs an elapsed interval shortly after waking, where
+	     an appointment whose minute passed in deep sleep is simply gone. -->
+	<key>StartInterval</key>
+	<integer>900</integer>
 
 	<!-- And at login. launchd also runs a missed calendar job once the Mac
 	     wakes, so a closed lid at 3 AM only delays it. -->
