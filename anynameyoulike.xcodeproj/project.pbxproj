@@ -417,8 +417,8 @@
 				INFOPLIST_FILE = anynameyoulike/Info.plist;
 				INFOPLIST_KEY_CFBundleDisplayName = Tally;
 				INFOPLIST_KEY_LSApplicationCategoryType = "public.app-category.lifestyle";
-				INFOPLIST_KEY_NSHealthShareUsageDescription = "Used to log step data.";
-				INFOPLIST_KEY_NSHealthUpdateUsageDescription = "Used to log step data.";
+				INFOPLIST_KEY_NSHealthShareUsageDescription = "Shows your heart rate, heart rate variability, blood oxygen, sleep and step count on the health screen. Nothing leaves your phone.";
+				INFOPLIST_KEY_NSHealthUpdateUsageDescription = "Saves step counts you log in the app back to Health. Steps are all it writes.";
 				INFOPLIST_KEY_UIApplicationSceneManifest_Generation = YES;
 				INFOPLIST_KEY_UIApplicationSupportsIndirectInputEvents = YES;
 				INFOPLIST_KEY_UILaunchScreen_Generation = YES;
@@ -455,8 +455,8 @@
 				INFOPLIST_FILE = anynameyoulike/Info.plist;
 				INFOPLIST_KEY_CFBundleDisplayName = Tally;
 				INFOPLIST_KEY_LSApplicationCategoryType = "public.app-category.lifestyle";
-				INFOPLIST_KEY_NSHealthShareUsageDescription = "Used to log step data.";
-				INFOPLIST_KEY_NSHealthUpdateUsageDescription = "Used to log step data.";
+				INFOPLIST_KEY_NSHealthShareUsageDescription = "Shows your heart rate, heart rate variability, blood oxygen, sleep and step count on the health screen. Nothing leaves your phone.";
+				INFOPLIST_KEY_NSHealthUpdateUsageDescription = "Saves step counts you log in the app back to Health. Steps are all it writes.";
 				INFOPLIST_KEY_UIApplicationSceneManifest_Generation = YES;
 				INFOPLIST_KEY_UIApplicationSupportsIndirectInputEvents = YES;
 				INFOPLIST_KEY_UILaunchScreen_Generation = YES;
