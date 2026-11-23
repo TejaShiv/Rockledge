@@ -9,7 +9,7 @@ final class NotificationPresenter: NSObject, UNUserNotificationCenterDelegate {
         [.banner, .list, .sound]
     }
 
-    /// A tap on the nightly reminder goes straight to exporting. The app may
+    /// A tap on the evening reminder goes straight to exporting. The app may
     /// not be running yet, so this only records where to go.
     func userNotificationCenter(
         _ center: UNUserNotificationCenter,
@@ -23,7 +23,7 @@ final class NotificationPresenter: NSObject, UNUserNotificationCenterDelegate {
             return
         }
 
-        guard category == NightlyReminder.category,
+        guard category == MeditateReminder.category,
               response.actionIdentifier == UNNotificationDefaultActionIdentifier
         else { return }
 

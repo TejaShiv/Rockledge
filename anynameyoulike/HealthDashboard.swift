@@ -107,16 +107,16 @@ struct HealthDashboard: View {
             if phase == .active {
                 Task {
                     await refreshAll()
-                    reminderOn = await NightlyReminder.isLive()
+                    reminderOn = await MeditateReminder.isLive()
                 }
             } else {
                 cancelHold()
             }
         }
         .task {
-            reminderOn = await NightlyReminder.isLive()
-            if NightlyReminder.isEnabled && !reminderOn {
-                reminderOn = await NightlyReminder.apply()
+            reminderOn = await MeditateReminder.isLive()
+            if MeditateReminder.isEnabled && !reminderOn {
+                reminderOn = await MeditateReminder.apply()
             }
             await refreshAll()
             await heart.start()

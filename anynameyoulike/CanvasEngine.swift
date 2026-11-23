@@ -59,7 +59,7 @@ nonisolated enum CanvasReminders {
     static let hour = 9
 
     /// iOS allows 64 pending notifications per app and silently drops the
-    /// rest. The trash rota, the nightly reminder and the two signing
+    /// rest. The trash rota, the evening reminder and the two signing
     /// warnings all need slots, so assignments take at most forty and the
     /// soonest ones win.
     static let budget = 40

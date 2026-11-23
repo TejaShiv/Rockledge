@@ -13,7 +13,7 @@ struct ReminderSheet: View {
     let haptics: GrainHaptics
     @Environment(\.dismiss) private var dismiss
 
-    @State private var time = NightlyReminder.timeAsDate
+    @State private var time = MeditateReminder.timeAsDate
     @State private var note = ""
 
     var body: some View {
@@ -38,7 +38,7 @@ struct ReminderSheet: View {
                     .colorScheme(.dark)
                     .frame(maxWidth: 240)
 
-                Text("Steps hakolo Gubaldu...")
+                Text("Eight o'clock, every evening.")
                     .font(.caption.weight(.bold))
                     .foregroundStyle(Palette.bone.opacity(0.35))
                     .padding(.top, 16)
@@ -63,12 +63,12 @@ struct ReminderSheet: View {
         VStack(spacing: 12) {
             Button {
                 Task {
-                    NightlyReminder.isEnabled = true
-                    let ok = await NightlyReminder.apply(at: time)
+                    MeditateReminder.isEnabled = true
+                    let ok = await MeditateReminder.apply(at: time)
                     isOn = ok
                     haptics.commit()
                     note = ok
-                        ? "set for \(NightlyReminder.timeText) daily"
+                        ? "set for \(MeditateReminder.timeText) daily"
                         : "allow notifications in Settings"
                 }
             } label: {
@@ -86,7 +86,7 @@ struct ReminderSheet: View {
                 Button {
                     haptics.soft()
                     Task {
-                        let ok = await NightlyReminder.fireTestSoon()
+                        let ok = await MeditateReminder.fireTestSoon()
                         note = ok ? "test in 10s, lock the phone" : "allow notifications first"
                     }
                 } label: {
@@ -110,7 +110,7 @@ struct ReminderSheet: View {
 
                 if isOn {
                     Button {
-                        NightlyReminder.cancel()
+                        MeditateReminder.cancel()
                         isOn = false
                         haptics.soft()
                         note = "reminder off"

@@ -311,4 +311,3 @@ final class Pantry {
     }
 }
 
-// MARK: - Nightly log reminder

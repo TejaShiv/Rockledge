@@ -17,14 +17,13 @@ struct NotificationBudgetTests {
         #expect(NotificationModules.label(for: "trashNight-1793600000") == "trash")
         #expect(NotificationModules.label(for: "signingRebuild-24h") == "signing")
         #expect(NotificationModules.label(for: "signingRebuild-2h") == "signing")
-        #expect(NotificationModules.label(for: "nightlyReminder") == "nightly")
         #expect(NotificationModules.label(for: "meditateReminder") == "meditate")
     }
 
     /// The test reminder is its own line: it is not part of any budget and
-    /// seeing it counted as the real nightly one would be misleading.
+    /// seeing it counted as the real meditate one would be misleading.
     @Test func keepsTheTestReminderSeparate() {
-        #expect(NotificationModules.label(for: "nightlyTest-ABC-123") == "nightly test")
+        #expect(NotificationModules.label(for: "meditateTest-ABC-123") == "meditate test")
     }
 
     /// Anything unrecognised has to show up somewhere. A notification that
@@ -41,11 +40,11 @@ struct NotificationBudgetTests {
             "canvas-1-2d", "canvas-1-1d", "canvas-2-2d",
             "trashNight-100", "trashNight-200",
             "signingRebuild-24h",
-            "nightlyReminder",
+            "meditateReminder",
         ])
 
         #expect(census.total == 7)
-        #expect(census.modules.map(\.name) == ["canvas", "trash", "nightly", "signing"])
+        #expect(census.modules.map(\.name) == ["canvas", "trash", "meditate", "signing"])
         #expect(census.modules.first?.count == 3)
     }
 
@@ -53,10 +52,10 @@ struct NotificationBudgetTests {
     /// sort by name, or the list would reshuffle between readings.
     @Test func ordersByWeightThenSteadily() {
         let census = NotificationModules.census(of: [
-            "nightlyReminder", "trashNight-1", "signingRebuild-2h",
+            "meditateReminder", "trashNight-1", "signingRebuild-2h",
         ])
 
-        #expect(census.modules.map(\.name) == ["nightly", "signing", "trash"])
+        #expect(census.modules.map(\.name) == ["meditate", "signing", "trash"])
         #expect(census.modules.allSatisfy { $0.count == 1 })
     }
 
@@ -71,22 +70,22 @@ struct NotificationBudgetTests {
 
     // MARK: How loudly it reads
 
-    /// Including 56, which is everything the app can schedule at once.
+    /// Including 55, which is everything the app can schedule at once.
     @Test func staysQuietThroughTheBusiestNormalWeek() {
-        for total in [0, 20, 49, 50, 55, 56] {
+        for total in [0, 20, 49, 50, 55] {
             #expect(census(total).pressure == .fine, "\(total) should be quiet")
         }
     }
 
-    @Test func warnsFromFiftySevenToFiftyEight() {
-        for total in [57, 58] {
+    @Test func warnsFromFiftySixToFiftySeven() {
+        for total in [56, 57] {
             #expect(census(total).pressure == .tight, "\(total) should warn")
         }
     }
 
-    /// Above 58 is the signal that Canvas's cap of 40 is too generous.
-    @Test func shoutsAboveFiftyEight() {
-        for total in [59, 63, 64, 70] {
+    /// Above 57 is the signal that Canvas's cap of 40 is too generous.
+    @Test func shoutsAboveFiftySeven() {
+        for total in [58, 63, 64, 70] {
             #expect(census(total).pressure == .critical, "\(total) should shout")
         }
     }
@@ -110,7 +109,7 @@ struct NotificationBudgetTests {
     @Test func theWholeAppAtFullStretchStillFits() {
         var identifiers = (0..<40).map { "canvas-\($0)-2d" }
         identifiers += (0..<12).map { "trashNight-\($0)" }
-        identifiers += ["signingRebuild-24h", "signingRebuild-2h", "nightlyReminder"]
+        identifiers += ["signingRebuild-24h", "signingRebuild-2h", "meditateReminder"]
 
         let census = NotificationModules.census(of: identifiers)
 

@@ -195,7 +195,6 @@ struct ContentView: View {
             await Signing.scheduleReminders()
             await HealthAuth.request()
             await TrashReminder.reschedule(rota)
-            await NightlyReminder.apply()
             await MeditateReminder.apply()
             await refresh()
 
@@ -262,7 +261,7 @@ struct ContentView: View {
         return f
     }()
 
-    /// A tap on the nightly reminder lands here, on the destination picker
+    /// A tap on the evening reminder lands here, on the destination picker
     /// itself rather than on the backup screen.
     ///
     /// Presented from here rather than from inside the backup sheet: a sheet

@@ -335,7 +335,7 @@ struct CanvasTests {
     }
 
     /// iOS keeps 64 pending notifications and drops the rest silently, so
-    /// the nightly reminder, the trash rota and the signing warnings all
+    /// the evening reminder, the trash rota and the signing warnings all
     /// need room left over.
     @Test func staysInsideTheNotificationBudget() {
         let many = (0..<60).map {
