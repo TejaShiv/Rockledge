@@ -18,6 +18,7 @@ struct NotificationBudgetTests {
         #expect(NotificationModules.label(for: "signingRebuild-24h") == "signing")
         #expect(NotificationModules.label(for: "signingRebuild-2h") == "signing")
         #expect(NotificationModules.label(for: "nightlyReminder") == "nightly")
+        #expect(NotificationModules.label(for: "meditateReminder") == "meditate")
     }
 
     /// The test reminder is its own line: it is not part of any budget and
@@ -70,22 +71,22 @@ struct NotificationBudgetTests {
 
     // MARK: How loudly it reads
 
-    /// Including 55, which is everything the app can schedule at once.
+    /// Including 56, which is everything the app can schedule at once.
     @Test func staysQuietThroughTheBusiestNormalWeek() {
-        for total in [0, 20, 49, 50, 55] {
+        for total in [0, 20, 49, 50, 55, 56] {
             #expect(census(total).pressure == .fine, "\(total) should be quiet")
         }
     }
 
-    @Test func warnsFromFiftySixToFiftySeven() {
-        for total in [56, 57] {
+    @Test func warnsFromFiftySevenToFiftyEight() {
+        for total in [57, 58] {
             #expect(census(total).pressure == .tight, "\(total) should warn")
         }
     }
 
-    /// Above 57 is the signal that Canvas's cap of 40 is too generous.
-    @Test func shoutsAboveFiftySeven() {
-        for total in [58, 63, 64, 70] {
+    /// Above 58 is the signal that Canvas's cap of 40 is too generous.
+    @Test func shoutsAboveFiftyEight() {
+        for total in [59, 63, 64, 70] {
             #expect(census(total).pressure == .critical, "\(total) should shout")
         }
     }

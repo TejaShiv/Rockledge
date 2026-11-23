@@ -196,6 +196,7 @@ struct ContentView: View {
             await HealthAuth.request()
             await TrashReminder.reschedule(rota)
             await NightlyReminder.apply()
+            await MeditateReminder.apply()
             await refresh()
 
             // Counted after the whole launch pass, once everything that

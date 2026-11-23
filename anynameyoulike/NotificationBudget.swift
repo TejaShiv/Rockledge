@@ -29,9 +29,9 @@ nonisolated struct NotificationCensus: Equatable {
     var takenAt: Date
 
     enum Pressure {
-        case fine           // under 56
-        case tight          // 56 to 57
-        case critical       // above 57
+        case fine           // under 57
+        case tight          // 57 to 58
+        case critical       // above 58
 
         @MainActor
         var tint: Color {
@@ -43,16 +43,16 @@ nonisolated struct NotificationCensus: Equatable {
         }
     }
 
-    /// Orange starts at 56, not 50.
+    /// Orange starts at 57, not 50.
     ///
-    /// The app's structural maximum is 55 — forty Canvas, twelve trash, two
-    /// signing, one nightly — so a band opening at 50 would have been orange
-    /// through an ordinary busy week. A warning that is on during normal
-    /// operation is not a warning. At 56 it can only mean something has been
-    /// added that the budgets do not account for.
+    /// The app's structural maximum is 56 — forty Canvas, twelve trash, two
+    /// signing, one nightly, one meditate — so a band opening at 50 would
+    /// have been orange through an ordinary busy week. A warning that is on
+    /// during normal operation is not a warning. At 57 it can only mean
+    /// something has been added that the budgets do not account for.
     var pressure: Pressure {
-        if total > 57 { return .critical }
-        if total >= 56 { return .tight }
+        if total > 58 { return .critical }
+        if total >= 57 { return .tight }
         return .fine
     }
 
@@ -80,6 +80,7 @@ nonisolated enum NotificationModules {
         if identifier.hasPrefix("signingRebuild") { return "signing" }
         if identifier.hasPrefix("nightlyTest") { return "nightly test" }
         if identifier == "nightlyReminder" { return "nightly" }
+        if identifier == "meditateReminder" { return "meditate" }
         return "other"
     }
 
