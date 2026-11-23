@@ -68,11 +68,13 @@ nonisolated enum MeditateReminder {
         // No body. The title is the whole message, and an empty body shows
         // as a single line rather than a blank second one.
         content.sound = .default
-        // Time sensitive, so it breaks through a Focus and lights the screen
-        // rather than waiting to be found. This is the one reminder here that
-        // is allowed to interrupt: a habit you have to remember to check on
-        // is one you have already missed.
-        content.interruptionLevel = .timeSensitive
+        // Active, which is as loud as this app can be: banner, sound, screen
+        // on. Not .timeSensitive — that one pierces a Focus, but it needs the
+        // Time Sensitive Notifications capability, and minting a profile with
+        // it fails on a free Apple account. The build breaks rather than
+        // degrading, so it is not worth carrying for a setting iOS would
+        // quietly ignore anyway.
+        content.interruptionLevel = .active
         content.categoryIdentifier = category
         return content
     }
