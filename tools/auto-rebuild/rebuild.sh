@@ -54,6 +54,10 @@ BACKUP_DIR="$CONFIG_DIR/backups"
 BACKUP_KEEP=30
 # Longest a copy may be before another is pulled.
 BACKUP_EVERY=$((6 * 3600))
+# How old the newest good copy has to be before a failed backup is worth
+# interrupting anyone about. Below this the failure is real but harmless:
+# there is a recent copy sitting right there.
+BACKUP_STALE_DAYS=3
 
 NTFY_SERVER="https://ntfy.sh"
 NTFY_TOPIC=""
@@ -69,6 +73,7 @@ esac
 mkdir -p "$STATE" "$(dirname "$LOG")"
 RETRY_FILE="$STATE/retry"
 NOTIFIED_FILE="$STATE/notified-for"
+BACKUP_NOTIFIED_FILE="$STATE/backup-notified-on"
 
 # The retry agent fires every half hour whether or not anything is waiting
 # for it. Nothing is armed, nothing to do — and it leaves the log alone,
@@ -116,6 +121,22 @@ push() {        # push <title> <body>
         -d "$2" \
         "$NTFY_SERVER/$NTFY_TOPIC" > /dev/null 2>&1 \
         || log "ntfy push failed"
+}
+
+# At most one backup warning a day, whatever happens in between. The signing
+# warning is gated on the deadline it is about; a backup has no deadline, so
+# this one is gated on the date.
+backup_warn_once() {    # backup_warn_once <title> <body>
+    local today last
+    today=$(/bin/date '+%Y-%m-%d')
+    last=$(/bin/cat "$BACKUP_NOTIFIED_FILE" 2>/dev/null || echo "")
+    if [ "$last" = "$today" ]; then
+        log "already warned about the backup today, staying quiet"
+        return 0
+    fi
+    echo "$today" > "$BACKUP_NOTIFIED_FILE"
+    push "$1" "$2"
+    banner "$1" "$2"
 }
 
 # Failures also surface on the Mac, in case the phone is the thing that is
@@ -454,9 +475,15 @@ elif ! back_up_data; then
     # failed copy must not stop it — but it is still worth being told.
     age=$(newest_backup_age)
     if [ "$age" -ge 9999 ]; then
-        push "Tally couldn't back up" "$BACKUP_PROBLEM. There is no saved backup at all yet."
+        backup_warn_once "Tally couldn't back up" \
+            "$BACKUP_PROBLEM. There is no saved backup at all yet."
+    elif [ "$age" -ge "$BACKUP_STALE_DAYS" ]; then
+        backup_warn_once "Tally couldn't back up" \
+            "$BACKUP_PROBLEM. Last good backup was $age day(s) ago."
     else
-        push "Tally couldn't back up" "$BACKUP_PROBLEM. Last good backup was $age day(s) ago."
+        # "Last good backup was 0 day(s) ago" was the old message here, which
+        # is an alarm about a copy taken this morning. Log it and move on.
+        log "backup failed, but the newest copy is $age day(s) old — staying quiet"
     fi
 fi
 
