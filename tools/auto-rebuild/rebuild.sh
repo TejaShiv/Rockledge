@@ -200,6 +200,11 @@ push_once() {           # push_once <deadline> <title> <body>
     fi
     echo "$1" > "$NOTIFIED_FILE"
     push "$2" "$3"
+    # Both channels behind the one gate. The banner used to sit outside it
+    # and fired on every run: with the agent waking every fifteen minutes,
+    # a single stuck deadline meant ninety-six identical notifications a
+    # day, which is how you teach someone to ignore the thing.
+    banner "$2" "$3"
 }
 
 # ---------------------------------------------------------------- backing up
@@ -325,7 +330,6 @@ die() {         # die <short reason>
     [ "$OLD_EXPIRY" -gt 0 ] && deadline=$(when_short "$OLD_EXPIRY")
     push_once "$OLD_EXPIRY" "Tally couldn't rebuild itself" \
         "$1. Rebuild from Xcode before $deadline."
-    banner "Tally couldn't rebuild itself" "$1"
     cleanup
     exit 1
 }
